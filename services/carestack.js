@@ -118,22 +118,27 @@ export async function getOrCreateCarestackPatient(contact) {
   const headers = getCarestackHeaders();
 
   try {
-    // 1. Search by email or name
-    const searchTerm = contact.email || `${contact.firstName} ${contact.lastName}`;
+    // 1. Search by email (Deep Filter)
     const searchUrl = `${BASE_URL}/api/v1.0/patients/search`;
-    
-    console.log(`🌐 Searching CareStack: ${searchUrl} (Term: ${searchTerm})`);
+    console.log(`🌐 Searching CareStack for Email: ${contact.email}`);
     
     const searchRes = await axios.post(searchUrl, {
-      SearchTerm: searchTerm,
-      Limit: 1
+      FilterByFields: [
+        {
+          Field: "Email",
+          Operator: "Equals",
+          Value: contact.email
+        }
+      ],
+      Limit: 1,
+      IncludeInactiveRecords: true
     }, { headers });
 
-    // The doc shows a single object or array — let's handle both
     const patients = Array.isArray(searchRes.data) ? searchRes.data : [searchRes.data];
-    if (patients.length > 0 && patients[0].PatientId) {
-      console.log(`✅ Found existing patient: ${patients[0].PatientId}`);
-      return patients[0].PatientId;
+    if (patients.length > 0 && (patients[0].PatientId || patients[0].id)) {
+      const pid = patients[0].PatientId || patients[0].id;
+      console.log(`✅ Found existing patient: ${pid}`);
+      return pid;
     }
 
     // 2. Create NEW patient if not found
