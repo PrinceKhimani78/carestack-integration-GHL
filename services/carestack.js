@@ -437,8 +437,15 @@ export async function handleCarestackWebhook(body, headers) {
       // Already synced → UPDATE existing GHL appointment
       console.log(`🔄 Updating existing GHL appointment: ${ghlId}`);
       await updateGHLAppointment(ghlId, payload);
-    } else if (event !== "Cancelled" && event !== "Deleted") {
-      // Not synced yet + Not a cancellation → CREATE new GHL appointment
+    } else if (event === "Cancelled" || event === "Deleted") {
+      // Cancelled but never synced to GHL → nothing to do, skip silently
+      console.log(`✅ Appt ${appointmentId} was cancelled but never synced to GHL. Skipping.`);
+      // Throw marker so poller caches it and stops retrying
+      const skipErr = new Error("NEVER_SYNCED_CANCEL");
+      skipErr.isHandled = true;
+      throw skipErr;
+    } else {
+      // Not synced yet + active → CREATE new GHL appointment
       console.log(`🆕 Creating new GHL appointment for ${appointment.patientName}...`);
       const ghlRes = await createGHLAppointment(payload);
 
@@ -553,8 +560,9 @@ async function syncRecentAppointments() {
           await handleCarestackWebhook(mockWebhookBody, {});
         } catch (innerErr) {
           if (innerErr.isSlotConflict) {
-            // GHL calendar is full at this slot — add to failed cache so we stop spamming it
             console.warn(`🚫 Slot conflict for Appt ${apptId} — caching for 1 hour.`);
+          } else if (innerErr.isHandled) {
+            console.log(`⏭️ Appt ${apptId} handled (skipped). Caching to prevent re-processing.`);
           } else {
             console.warn(`⏳ Sync failed for Appt ${apptId}: ${innerErr.message}`);
           }
