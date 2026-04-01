@@ -420,13 +420,17 @@ async function syncRecentAppointments() {
 
     // 2. Fetch using the official Sync API!
     const url = `${BASE_URL}/api/v1.0/sync/appointments?modifiedSince=${modifiedSince}`;
+    console.log(`🔗 Scanning URL: ${url}`);
+    
     const res = await axios.get(url, { headers });
+    
+    // 🔍 DEBUG: Log the full response to see exact structure
+    console.log("📦 Sync API Response:", JSON.stringify(res.data, null, 2));
 
-    // The Sync API returns results in res.data.Results
-    const appointments = res.data?.Results || [];
+    const appointments = res.data?.Results || res.data?.results || res.data?.Content || res.data?.items || [];
     
     if (appointments.length > 0) {
-      console.log(`🔍 Sync API found ${appointments.length} recent changes. Processing...`);
+      console.log(`🔍 Found ${appointments.length} modification(s) in window.`);
       
       for (const appt of appointments) {
         // Standardize keys (Sync API results are typically capitalized)
