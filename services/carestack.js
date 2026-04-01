@@ -5,7 +5,11 @@
 // ===============================
 
 import axios from "axios";
-import { createGHLAppointment, updateGHLAppointment } from "./ghl.js";
+import { 
+  createGHLAppointment, 
+  updateGHLAppointment, 
+  getOrCreateGHLContact 
+} from "./ghl.js";
 import { extractIdFromNotes } from "../utils/helpers.js";
 
 const BASE_URL = process.env.CARESTACK_BASE_URL; // https://dentistforchickens.carestack.au
@@ -84,10 +88,40 @@ async function updateCarestackAppointmentNotes(appointmentId, ghlId, existingNot
 }
 
 // ===============================
+// SEARCH OR CREATE PATIENT IN CARESTACK
+// ===============================
+export async function getOrCreateCarestackPatient(contact) {
+  const token = await getCarestackToken();
+  const headers = { Authorization: `Bearer ${token}` };
+
+  // 1. Search by email
+  if (contact.email) {
+    const res = await axios.get(`${BASE_URL}/api/v1.0/patients?email=${contact.email}`, { headers });
+    if (res.data?.length > 0) return res.data[0].patientId;
+  }
+
+  // 2. Search by phone
+  const phone = contact.phone || contact.mobilePhone;
+  if (phone) {
+    const res = await axios.get(`${BASE_URL}/api/v1.0/patients?phone=${phone}`, { headers });
+    if (res.data?.length > 0) return res.data[0].patientId;
+  }
+
+  // 3. Create NEW patient
+  console.log(`👤 Patient not found in CareStack — creating new one for ${contact.firstName}`);
+  const createRes = await axios.post(`${BASE_URL}/api/v1.0/patients`, {
+    firstName: contact.firstName,
+    lastName: contact.lastName || "",
+    email: contact.email || "",
+    mobilePhone: phone || ""
+  }, { headers });
+
+  return createRes.data?.patientId;
+}
+
+// ===============================
 // CREATE APPOINTMENT IN CARESTACK
 // POST {BASE_URL}/api/v1.0/appointments
-// Called when GHL creates a new appointment
-// that needs to sync back to CareStack
 // ===============================
 export async function createCarestackAppointment(data) {
   const token = await getCarestackToken();
@@ -98,10 +132,8 @@ export async function createCarestackAppointment(data) {
       startTime: data.startTime,
       endTime: data.endTime,
       patientName: data.title,
+      patientId: data.patientId, // Now correctly linked
       notes: `ghl_id:${data.ghlAppointmentId} | source:ghl`,
-      // 🔴 You may need additional required fields like:
-      // providerId, locationId, appointmentTypeId, patientId
-      // Check your CareStack API docs for required fields
     },
     {
       headers: {
@@ -143,14 +175,14 @@ export async function updateCarestackAppointment(appointmentId, data) {
 
 // ===============================
 // HANDLE CARESTACK WEBHOOK
-// Events: Scheduled, Updated, Rescheduled
-// Flow: CareStack → fetch details → create/update GHL
+// Events: Scheduled, Updated, Rescheduled, Cancelled
 // ===============================
 export async function handleCarestackWebhook(body, headers) {
   const event = body.event;
 
-  // Only process appointment scheduling events
-  if (!["Scheduled", "Updated", "Rescheduled"].includes(event)) {
+  // 1. Filter for events we care about
+  const handledEvents = ["Scheduled", "Updated", "Rescheduled", "Cancelled"];
+  if (!handledEvents.includes(event)) {
     console.log(`⏭️  Skipping CareStack event: ${event}`);
     return;
   }
@@ -180,24 +212,31 @@ export async function handleCarestackWebhook(body, headers) {
   }
 
   // 4. Build the payload for GHL
-  //    GHL requires: calendarId, locationId, contactId, startTime, endTime
+  // We need a contactId before we can book an appointment
+  console.log(`🔍 Mapping CareStack patient to GHL contact...`);
+  const contactId = await getOrCreateGHLContact(appointment);
+
+  if (!contactId) {
+    console.warn("❌ Could not map or create GHL contact — skipping sync");
+    return;
+  }
+
   const payload = {
     calendarId: process.env.GHL_CALENDAR_ID,
     locationId: process.env.GHL_LOCATION_ID,
+    contactId: contactId,
     startTime: appointment.startTime,
     endTime: appointment.endTime,
     title: appointment.patientName,
-    appointmentStatus: "confirmed",
-    // contactId is REQUIRED by GHL — you'll need to map/lookup the patient
-    // contactId: "GHL_CONTACT_ID_FOR_THIS_PATIENT",
+    appointmentStatus: event === "Cancelled" ? "cancelled" : "confirmed",
   };
 
   if (ghlId) {
     // Already synced → UPDATE existing GHL appointment
     console.log(`🔄 Updating existing GHL appointment: ${ghlId}`);
     await updateGHLAppointment(ghlId, payload);
-  } else {
-    // Not synced yet → CREATE new GHL appointment
+  } else if (event !== "Cancelled") {
+    // Not synced yet + Not a cancellation → CREATE new GHL appointment
     console.log(`🆕 Creating new GHL appointment`);
     const ghlRes = await createGHLAppointment(payload);
 

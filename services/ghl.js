@@ -9,6 +9,7 @@ import axios from "axios";
 import {
   createCarestackAppointment,
   updateCarestackAppointment,
+  getOrCreateCarestackPatient, // Added new helper
 } from "./carestack.js";
 
 // ===============================
@@ -28,10 +29,41 @@ function getGHLHeaders() {
 }
 
 // ===============================
+// SEARCH OR CREATE GHL CONTACT
+// Searches by email/phone or create new
+// ===============================
+export async function getOrCreateGHLContact(patient) {
+  const headers = getGHLHeaders();
+  
+  // 1. Search by email first
+  if (patient.email) {
+    const searchRes = await axios.get(`${GHL_BASE_URL}/contacts/search?query=${patient.email}`, { headers });
+    if (searchRes.data?.contacts?.length > 0) return searchRes.data.contacts[0].id;
+  }
+  
+  // 2. Search by phone
+  if (patient.mobilePhone || patient.homePhone) {
+    const phone = patient.mobilePhone || patient.homePhone;
+    const searchRes = await axios.get(`${GHL_BASE_URL}/contacts/search?query=${phone}`, { headers });
+    if (searchRes.data?.contacts?.length > 0) return searchRes.data.contacts[0].id;
+  }
+
+  // 3. Not found? Create NEW contact
+  console.log(`👤 Contact not found in GHL — creating new one for ${patient.firstName || patient.patientName}`);
+  const createRes = await axios.post(`${GHL_BASE_URL}/contacts/`, {
+    firstName: patient.firstName || patient.patientName,
+    lastName: patient.lastName || "",
+    email: patient.email || "",
+    phone: patient.mobilePhone || patient.homePhone || "",
+    locationId: process.env.GHL_LOCATION_ID
+  }, { headers });
+
+  return createRes.data?.contact?.id;
+}
+
+// ===============================
 // CREATE APPOINTMENT IN GHL
 // POST /calendars/events/appointments
-// Required fields: calendarId, locationId,
-//   contactId, startTime, endTime
 // ===============================
 export async function createGHLAppointment(data) {
   const res = await axios.post(
@@ -39,7 +71,7 @@ export async function createGHLAppointment(data) {
     {
       calendarId: data.calendarId || process.env.GHL_CALENDAR_ID,
       locationId: data.locationId || process.env.GHL_LOCATION_ID,
-      contactId: data.contactId, // 🔴 REQUIRED — must map CareStack patient → GHL contact
+      contactId: data.contactId, 
       title: data.title,
       startTime: data.startTime,
       endTime: data.endTime,
@@ -93,67 +125,53 @@ export async function getGHLAppointment(eventId) {
 
 // ===============================
 // HANDLE GHL WEBHOOK
-// Processes incoming GHL appointment events
-// and syncs back to CareStack
+// Events: Create, Update, Cancel
 // ===============================
 export async function handleGHLWebhook(body) {
   const event = body.type;
 
-  // Handle both create and update events
-  if (!["AppointmentCreate", "AppointmentUpdate"].includes(event)) {
+  // Filter for events we care about
+  const handledEvents = ["AppointmentCreate", "AppointmentUpdate", "AppointmentCancel"];
+  if (!handledEvents.includes(event)) {
     console.log(`⏭️  Skipping GHL event: ${event}`);
     return;
   }
 
   const appointment = body.appointment || body;
-
-  if (!appointment?.id) {
-    console.warn("⚠️  No appointment data in GHL webhook payload");
-    return;
-  }
+  if (!appointment?.id) return;
 
   console.log(`📥 GHL Event: ${event} | Appointment: ${appointment.id}`);
 
-  // ===============================
-  // 🔁 LOOP PREVENTION
-  // If this appointment title/notes contain
-  // "source:carestack", it was created by our sync
-  // → don't sync it back
-  // ===============================
-  if (appointment.notes?.includes("source:carestack")) {
-    console.log("🔁 Skipping — originated from CareStack (loop prevention)");
-    return;
-  }
+  // Loop prevention
+  if (appointment.notes?.includes("source:carestack")) return;
 
-  // Check if this GHL appointment is already linked to a CareStack appointment
-  // We look for "carestack_id:<id>" in the appointment notes
-  const carestackIdMatch = appointment.notes?.match(/carestack_id:(\w+[-\w]*)/);
-  const carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
+  const carestackId = appointment.notes?.match(/carestack_id:(\w+[-\w]*)/)?.[1];
 
   if (carestackId) {
-    // Already linked → UPDATE CareStack appointment
+    // Already linked → UPDATE or CANCEL in CareStack
     console.log(`🔄 Updating CareStack appointment: ${carestackId}`);
     await updateCarestackAppointment(carestackId, {
       startTime: appointment.startTime,
       endTime: appointment.endTime,
       title: appointment.title,
+      status: event === "AppointmentCancel" ? "cancelled" : "scheduled"
     });
   } else if (event === "AppointmentCreate") {
-    // New GHL appointment → CREATE in CareStack
-    console.log("🆕 Creating new CareStack appointment from GHL");
-    const csRes = await createCarestackAppointment({
+    // New → Search for patient FIRST, then Create
+    console.log(`🔍 Mapping GHL contact to CareStack patient...`);
+    const patientId = await getOrCreateCarestackPatient(appointment.contact || {});
+    
+    if (!patientId) {
+       console.error("❌ Could not map or create Carestack patient — skipping sync");
+       return;
+    }
+
+    await createCarestackAppointment({
       startTime: appointment.startTime,
       endTime: appointment.endTime,
       title: appointment.title,
       ghlAppointmentId: appointment.id,
+      patientId: patientId
     });
-
-    // If CareStack returns an ID, we should update GHL notes
-    // to store the link (carestack_id:<id>)
-    if (csRes?.appointmentId) {
-      console.log(`📝 Link created: GHL ${appointment.id} ↔ CareStack ${csRes.appointmentId}`);
-      // Optionally update GHL appointment notes via the Appointment Notes API
-      // POST /calendars/events/appointments/{eventId}/notes
-    }
   }
 }
