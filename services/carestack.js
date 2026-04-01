@@ -150,12 +150,11 @@ export async function getOrCreateCarestackPatient(contact) {
     // Careful check for existing patient
     const foundPatient = patients.find(p => 
       (p.Email?.toLowerCase() === contact.email?.toLowerCase()) || 
-      (p.email?.toLowerCase() === contact.email?.toLowerCase()) ||
-      (p.PatientId || p.id)
+      (p.email?.toLowerCase() === contact.email?.toLowerCase())
     );
 
     if (foundPatient) {
-      const pid = foundPatient.PatientId || foundPatient.id;
+      const pid = foundPatient.PatientId || foundPatient.patientId || foundPatient.id;
       console.log(`✅ Found existing patient: ${pid} — Updating info if changed...`);
       
       // Update Name/Phone in CareStack to match GHL latest
