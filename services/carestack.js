@@ -14,6 +14,9 @@ import { extractIdFromNotes } from "../utils/helpers.js";
 
 const BASE_URL = process.env.CARESTACK_BASE_URL; // https://dentistforchickens.carestack.au
 
+// Store the discovered location ID to avoid repeated calls
+let cachedLocationId = null;
+
 // ===============================
 // 🔐 CARESTACK AUTH HEADERS
 // As per documentation, we pass 3 keys in the header
@@ -27,19 +30,20 @@ function getCarestackHeaders() {
   };
 }
 
-// ===============================
-// FETCH APPOINTMENT DETAILS
-// GET {BASE_URL}/api/v1.0/appointments/{id}
-// ===============================
-async function getAppointmentDetails(appointmentId) {
-  const res = await axios.get(
-    `${BASE_URL}/api/v1.0/appointments/${appointmentId}`,
-    {
-      headers: getCarestackHeaders(),
-    }
-  );
+async function getCarestackLocationId() {
+  if (cachedLocationId) return cachedLocationId;
 
-  return res.data;
+  const res = await axios.get(`${BASE_URL}/api/v1.0/locations`, {
+    headers: getCarestackHeaders(),
+  });
+
+  if (res.data?.length > 0) {
+    cachedLocationId = res.data[0].Id || res.data[0].id;
+    console.log(`📍 Discovered Practice Location ID: ${cachedLocationId}`);
+    return cachedLocationId;
+  }
+
+  return null;
 }
 
 // ===============================
@@ -95,11 +99,14 @@ export async function getOrCreateCarestackPatient(contact) {
     // 2. Create NEW patient if not found
     console.log(`👤 Patient not found — creating new one for ${contact.firstName} ${contact.lastName}`);
     
+    // Auto-discover the main location ID for this practice
+    const locationId = await getCarestackLocationId();
+
     const newPatientData = {
       FirstName: contact.firstName,
       LastName: contact.lastName || "Patient",
       Email: contact.email || "",
-      // Removed Mobile to avoid 500 error from strict regex formatting
+      DefaultLocationId: locationId, // 👈 KEY FIX: Assigned home office
       DOB: "1990-01-01T00:00:00Z", 
       Gender: "Male",              
       MaritalStatus: "Single",     
