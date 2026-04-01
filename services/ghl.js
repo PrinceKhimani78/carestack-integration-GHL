@@ -86,6 +86,7 @@ export async function createGHLAppointment(data) {
       startTime: data.startTime,
       endTime: data.endTime,
       appointmentStatus: data.appointmentStatus || "confirmed",
+      ignoreDateRange: true,
     },
     {
       headers: getGHLHeaders(),
@@ -109,6 +110,7 @@ export async function updateGHLAppointment(eventId, data) {
       startTime: data.startTime,
       endTime: data.endTime,
       appointmentStatus: data.appointmentStatus || "confirmed",
+      ignoreDateRange: true,
     },
     {
       headers: getGHLHeaders(),
