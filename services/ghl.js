@@ -209,10 +209,23 @@ export async function handleGHLWebhook(body) {
   const isCancelled = ["cancelled", "invalid", "no_show"].includes(appointmentStatus?.toLowerCase());
 
 
-  // 2. Loop prevention
+  // 2. Loop prevention — check webhook notes first
   if (appointment.notes?.includes("source:carestack")) return;
 
-  const notes = appointment.notes || "";
+  // For cancellations: GHL sends stale webhook data (original booking state).
+  // Fetch the CURRENT appointment from GHL API to get updated notes with carestack_id.
+  let notes = appointment.notes || "";
+  if (isCancelled) {
+    try {
+      console.log(`🔍 Fetching current GHL appointment ${appointment.appointmentId} to check carestack_id...`);
+      const liveAppt = await getGHLAppointment(appointment.appointmentId);
+      notes = liveAppt?.notes || liveAppt?.appointment?.notes || notes;
+      console.log(`📋 Live GHL notes: "${notes}"`);
+    } catch (err) {
+      console.warn(`⚠️ Could not fetch live GHL appointment: ${err.message}. Using webhook notes.`);
+    }
+  }
+
   const carestackIdMatch = notes.match(/carestack_id:(\d+)/);
   const carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
 
