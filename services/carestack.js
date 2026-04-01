@@ -20,7 +20,7 @@ const BASE_URL = process.env.CARESTACK_BASE_URL; // https://dentistforchickens.c
 // Token endpoint: {BASE_URL}/connect/token
 // ===============================
 async function getCarestackToken() {
-  const authUrl = `${BASE_URL}/connect/token`;
+  const authUrl = `https://identity.carestack.com/connect/token`;
   console.log(`🔑 Attempting CareStack Auth: ${authUrl}`);
   
   try {
