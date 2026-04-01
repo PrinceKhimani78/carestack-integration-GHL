@@ -127,40 +127,44 @@ export async function getGHLAppointment(eventId) {
 // HANDLE GHL WEBHOOK
 // Events: Create, Update, Cancel
 // ===============================
+// ===============================
+// HANDLE GHL WEBHOOK
+// Processes Workflow webhooks
+// ===============================
 export async function handleGHLWebhook(body) {
-  console.log("🧐 DEBUG — Full GHL Webhook Body:", JSON.stringify(body, null, 2));
-  const event = body.type;
-
-  // Filter for events we care about
-  const handledEvents = ["AppointmentCreate", "AppointmentUpdate", "AppointmentCancel"];
-  if (!handledEvents.includes(event)) {
-    console.log(`⏭️  Skipping GHL event: ${event}`);
+  // 1. Detect the data structure
+  // GHL Workflows put appointment data in body.calendar
+  const appointment = body.calendar;
+  if (!appointment || !appointment.appointmentId) {
+    console.log("⏭️  Skipping GHL event: No appointment data found");
     return;
   }
 
-  const appointment = body.appointment || body;
-  if (!appointment?.id) return;
+  console.log(`📥 GHL Workflow Event | Appointment: ${appointment.appointmentId}`);
 
-  console.log(`📥 GHL Event: ${event} | Appointment: ${appointment.id}`);
-
-  // Loop prevention
+  // 2. Loop prevention
+  // GHL workflows often don't pass notes, but we check if we can
   if (appointment.notes?.includes("source:carestack")) return;
 
   const carestackId = appointment.notes?.match(/carestack_id:(\w+[-\w]*)/)?.[1];
 
   if (carestackId) {
-    // Already linked → UPDATE or CANCEL in CareStack
-    console.log(`🔄 Updating CareStack appointment: ${carestackId}`);
+    // Already linked → UPDATE in CareStack
+    console.log(`🔄 Updating existing CareStack appointment: ${carestackId}`);
     await updateCarestackAppointment(carestackId, {
       startTime: appointment.startTime,
       endTime: appointment.endTime,
-      title: appointment.title,
-      status: event === "AppointmentCancel" ? "cancelled" : "scheduled"
+      title: appointment.title
     });
-  } else if (event === "AppointmentCreate") {
-    // New → Search for patient FIRST, then Create
+  } else {
+    // New → Search for patient using root-level contact info, then Create
     console.log(`🔍 Mapping GHL contact to CareStack patient...`);
-    const patientId = await getOrCreateCarestackPatient(appointment.contact || {});
+    const patientId = await getOrCreateCarestackPatient({
+      firstName: body.first_name,
+      lastName: body.last_name,
+      email: body.email,
+      phone: body.phone || body.contact_phone
+    });
     
     if (!patientId) {
        console.error("❌ Could not map or create Carestack patient — skipping sync");
@@ -170,8 +174,8 @@ export async function handleGHLWebhook(body) {
     await createCarestackAppointment({
       startTime: appointment.startTime,
       endTime: appointment.endTime,
-      title: appointment.title,
-      ghlAppointmentId: appointment.id,
+      title: appointment.title || `${body.first_name} ${body.last_name}`,
+      ghlAppointmentId: appointment.appointmentId,
       patientId: patientId
     });
   }
