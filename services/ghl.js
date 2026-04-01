@@ -196,12 +196,12 @@ export async function findGHLAppointmentByTime(calendarId, contactId, startTime)
 // ===============================
 export async function handleGHLWebhook(body) {
   try {
-    // 🐾 GLOBAL WATCHDOG
-    console.log(`📡 GHL Webhook Hit! Body:`, JSON.stringify(body, null, 2));
-
+    console.log(`[TRACE] 1. Webhook received. Initializing handler...`);
+    console.log(`[TRACE] 2. Payload size: ${JSON.stringify(body).length} bytes`);
+    
     const appointment = body.calendar;
     if (!appointment || !appointment.appointmentId) {
-      console.log("⏭️  Skipping GHL event: No appointment data found");
+      console.log("[TRACE] ❌ 3. ABORT: No calendar/appointmentId found in payload");
       return;
     }
 
@@ -211,47 +211,60 @@ export async function handleGHLWebhook(body) {
       body.appointment_status || 
       "";
     
-    console.log(`📥 GHL Event | ID: ${appointment.appointmentId} | Status: ${appointmentStatus}`);
+    console.log(`[TRACE] 4. Appointment Status parsed: "${appointmentStatus}" | ID: ${appointment.appointmentId}`);
 
     const isCancelled = ["cancelled", "invalid", "no_show"].includes(appointmentStatus?.toLowerCase());
+    console.log(`[TRACE] 5. Is Cancellation: ${isCancelled}`);
 
-    if (appointment.notes?.includes("source:carestack")) return;
+    if (appointment.notes?.includes("source:carestack")) {
+      console.log(`[TRACE] ⏭️ 6. SKIP: Loop detected (source:carestack in notes)`);
+      return;
+    }
 
     let notes = appointment.notes || "";
+    console.log(`[TRACE] 7. Current Notes: "${notes}"`);
+
     if (isCancelled) {
       try {
-        console.log(`🔍 Fetching live GHL appointment to check notes for ID: ${appointment.appointmentId}`);
+        console.log(`[TRACE] 8. Cancellation detected. Fetching LIVE GHL data for updated notes...`);
         const liveAppt = await getGHLAppointment(appointment.appointmentId);
         notes = liveAppt?.notes || liveAppt?.appointment?.notes || notes;
-        console.log(`📋 Live GHL notes: "${notes}"`);
+        console.log(`[TRACE] 9. Live Notes Result: "${notes}"`);
       } catch (err) {
-        console.warn(`⚠️ Could not fetch live notes: ${err.message}`);
+        console.warn(`[TRACE] ⚠️ 8a. Live fetch failed: ${err.message}. Using webhook notes.`);
       }
     }
 
     const carestackIdMatch = notes.match(/carestack_id:(\d+)/);
     let carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
+    console.log(`[TRACE] 10. carestack_id from notes: ${carestackId || "NONE"}`);
 
-    // Fallback to Map
     if (!carestackId) {
+      console.log(`[TRACE] 11. ID not in notes. Checking in-memory map...`);
       carestackId = ghlToCarestackMap.get(appointment.appointmentId);
-      if (carestackId) console.log(`🔍 Found ID ${carestackId} in Local Map for GHL Appt ${appointment.appointmentId}`);
+      if (carestackId) {
+        console.log(`[TRACE] ✅ 12. FOUND ID in Local Map: ${carestackId}`);
+      } else {
+        console.log(`[TRACE] ❌ 12. ID NOT in Local Map`);
+      }
     }
 
     if (carestackId) {
       if (isCancelled) {
-        console.log(`❌ GHL Cancelled — Cancelling CareStack appointment: ${carestackId}`);
-        await cancelCarestackAppointment(carestackId).catch(err => console.warn(`⚠️ CareStack Cancel Fail: ${err.message}`));
+        console.log(`[TRACE] 13a. ROUTE: Cancellation for CS Appt ${carestackId}`);
+        await cancelCarestackAppointment(carestackId).catch(err => console.warn(`[TRACE] ❌ Cancel Fail: ${err.message}`));
       } else {
-        console.log(`🔄 Updating existing CareStack appointment: ${carestackId}`);
+        console.log(`[TRACE] 13b. ROUTE: Update for CS Appt ${carestackId}`);
         await updateCarestackAppointment(carestackId, {
           startTime: appointment.startTime,
           endTime: appointment.endTime,
           title: appointment.title
-        }).catch(err => console.warn(`⚠️ CareStack Update Fail: ${err.message}`));
+        }).catch(err => console.warn(`[TRACE] ❌ Update Fail: ${err.message}`));
       }
     } else if (!isCancelled) {
-      console.log(`🔍 Mapping GHL contact to CareStack patient...`);
+      console.log(`[TRACE] 13c. ROUTE: New Creation Path`);
+      
+      console.log(`[TRACE] 14. Resolving/Creating Patient in CareStack for ${body.email}...`);
       const patientId = await getOrCreateCarestackPatient({
         firstName: body.first_name,
         lastName: body.last_name,
@@ -260,11 +273,11 @@ export async function handleGHLWebhook(body) {
       });
       
       if (!patientId) {
-        console.error("❌ Could not map Carestack patient — skipping creation");
+        console.error("[TRACE] ❌ 15. ABORT: Could not map Carestack patient");
         return;
       }
 
-      console.log(`🆕 Creating NEW CareStack appointment for patient ${patientId}...`);
+      console.log(`[TRACE] 16. Patient Resolved: ${patientId}. Creating Appointment...`);
       await createCarestackAppointment({
         startTime: appointment.startTime,
         endTime: appointment.endTime,
@@ -273,16 +286,18 @@ export async function handleGHLWebhook(body) {
         patientId: patientId
       }).then(async (carestackRes) => {
         const csId = carestackRes?.Content?.Id || carestackRes?.id || carestackRes?.Id;
+        console.log(`[TRACE] 17. CareStack ID returned: ${csId || "NONE"}`);
+        
         if (csId) {
-          console.log(`🗺️ Storing link in map: ${appointment.appointmentId} → ${csId}`);
+          console.log(`[TRACE] 18. Storing GHL->CS link in map: ${appointment.appointmentId} → ${csId}`);
           ghlToCarestackMap.set(appointment.appointmentId, String(csId));
           await updateGHLAppointmentNotes(appointment.appointmentId, csId);
         }
       }).catch(err => {
-        console.error(`❌ CareStack create fail:`, err.response?.data || err.message);
+        console.error(`[TRACE] ❌ 17. createCarestackAppointment failed:`, err.response?.data || err.message);
       });
     }
   } catch (err) {
-    console.error(`❌ GHL Webhook Global Error:`, err.stack || err.message);
+    console.error(`[TRACE] 🔴 GLOBAL ERROR in GHL Webhook:`, err.stack || err.message);
   }
 }
