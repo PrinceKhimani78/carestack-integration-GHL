@@ -382,3 +382,87 @@ export async function handleCarestackWebhook(body, headers) {
     }
   }
 }
+
+// ===============================
+// POLLING / SCANNING ENGINE
+// Runs every 1 minute to catch non-webhook changes
+// ===============================
+export function startCarestackPolling(intervalMs = 60000) {
+  console.log(`🚀 CareStack Auto-Scanner initialized (Interval: ${intervalMs/1000}s)`);
+  
+  // Wait 10 seconds for initial server boot, then scan
+  setTimeout(async () => {
+    try {
+      await syncRecentAppointments();
+    } catch (err) {
+      console.error("❌ Initial scan error:", err.message);
+    }
+  }, 10000);
+
+  // Then run every minute
+  setInterval(async () => {
+    try {
+      await syncRecentAppointments();
+    } catch (err) {
+      console.error("❌ Scan cycle error:", err.message);
+    }
+  }, intervalMs);
+}
+
+async function syncRecentAppointments() {
+  const headers = getCarestackHeaders();
+  console.log(`🔄 Scanning CareStack for changes...`);
+
+  try {
+    const now = new Date();
+    const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('.')[0]; 
+    const endTime = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('.')[0]; 
+
+    const url = `${BASE_URL}/api/v1.0/appointments?locationId=1&startTime=${startTime}&endTime=${endTime}`;
+    const res = await axios.get(url, { headers });
+
+    const appointments = Array.isArray(res.data) ? res.data : (res.data?.Content || res.data?.items || []);
+    
+    if (appointments.length > 0) {
+      console.log(`🔍 Scan found ${appointments.length} appointments. Checking for unsynced ones...`);
+      
+      for (const appt of appointments) {
+        // Standardize keys (API might return lowercase or uppercase)
+        const notes = appt.Notes || appt.notes || "";
+        const apptId = appt.Id || appt.id || appt.AppointmentId;
+        const patientName = appt.PatientName || appt.patientName || "Patient";
+
+        // 1. Loop Prevention + Search Prevention
+        if (notes.includes("source:ghl")) continue;
+        
+        const ghlId = extractIdFromNotes(notes, "ghl_id");
+        if (ghlId) continue; // Already synced
+
+        // 2. Found an Unsynced Appointment! 🆕
+        console.log(`✨ Found unsynced appointment ${apptId} for ${patientName}. Syncing to GHL now...`);
+        
+        // We'll mimic the webhook body to reuse our logic
+        const mockWebhookBody = {
+          event: "Scheduled",
+          data: {
+            NewAppointment: {
+              AppointmentId: apptId,
+              Notes: notes,
+              PatientName: patientName,
+              StartTime: appt.StartTime || appt.startTime || appt.DateTime || appt.dateTime,
+              EndTime: appt.EndTime || appt.endTime
+            }
+          }
+        };
+
+        try {
+          await handleCarestackWebhook(mockWebhookBody, {});
+        } catch (innerErr) {
+          console.warn(`⚠️ Failed to auto-sync appointment ${apptId}: ${innerErr.message}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("❌ Polling cycle error:", err.message);
+  }
+}

@@ -7,7 +7,7 @@ import "dotenv/config"; // Load .env variables FIRST
 import express from "express";
 import bodyParser from "body-parser";
 
-import { handleCarestackWebhook } from "./services/carestack.js";
+import { handleCarestackWebhook, startCarestackPolling } from "./services/carestack.js";
 import { handleGHLWebhook } from "./services/ghl.js";
 
 const app = express();
@@ -58,4 +58,7 @@ app.get("/health", (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Sync server running on port ${PORT}`);
+  
+  // 🚀 Start the 1-minute Auto-Scanner loop
+  startCarestackPolling(60000); 
 });
