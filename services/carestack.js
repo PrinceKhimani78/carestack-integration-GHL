@@ -12,6 +12,18 @@ import {
 } from "./ghl.js";
 import { extractIdFromNotes } from "../utils/helpers.js";
 
+// Helper to format phone to CareStack regex: (123) 456-7890
+function formatPhone(phone) {
+  if (!phone) return "";
+  const cleaned = ("" + phone).replace(/\D/g, "");
+  const match = cleaned.match(/^(\d{3})(\d{3})(\d{4})$/);
+  if (match) {
+    return "(" + match[1] + ") " + match[2] + "-" + match[3];
+  }
+  // If it's longer (e.g. +91), just try to keep it simple but it might fail
+  return phone;
+}
+
 const BASE_URL = process.env.CARESTACK_BASE_URL; // https://dentistforchickens.carestack.au
 
 // Store discovered IDs to avoid repeated API calls
@@ -118,26 +130,50 @@ export async function getOrCreateCarestackPatient(contact) {
   const headers = getCarestackHeaders();
 
   try {
-    // 1. Search by email (Deep Filter)
+    // 1. Search by email (Deep Filter) OR broad search
     const searchUrl = `${BASE_URL}/api/v1.0/patients/search`;
     console.log(`🌐 Searching CareStack for Email: ${contact.email}`);
     
-    const searchRes = await axios.post(searchUrl, {
-      FilterByFields: [
-        {
-          Field: "Email",
-          Operator: "Equals",
-          Value: contact.email
-        }
-      ],
-      Limit: 1,
+    // Try BOTH specific filter and broad search term
+    const searchPayload = {
+      SearchTerm: contact.email,
+      Limit: 5,
       IncludeInactiveRecords: true
-    }, { headers });
+    };
 
-    const patients = Array.isArray(searchRes.data) ? searchRes.data : [searchRes.data];
-    if (patients.length > 0 && (patients[0].PatientId || patients[0].id)) {
-      const pid = patients[0].PatientId || patients[0].id;
-      console.log(`✅ Found existing patient: ${pid}`);
+    const searchRes = await axios.post(searchUrl, searchPayload, { headers });
+    console.log(`📡 CareStack Search Response:`, JSON.stringify(searchRes.data, null, 2));
+
+    const patients = Array.isArray(searchRes.data) ? searchRes.data : 
+                     (searchRes.data?.Content ? searchRes.data.Content : [searchRes.data]);
+
+    // Careful check for existing patient
+    const foundPatient = patients.find(p => 
+      (p.Email?.toLowerCase() === contact.email?.toLowerCase()) || 
+      (p.email?.toLowerCase() === contact.email?.toLowerCase()) ||
+      (p.PatientId || p.id)
+    );
+
+    if (foundPatient) {
+      const pid = foundPatient.PatientId || foundPatient.id;
+      console.log(`✅ Found existing patient: ${pid} — Updating info if changed...`);
+      
+      // Update Name/Phone in CareStack to match GHL latest
+      try {
+        await axios.put(`${BASE_URL}/api/v1.0/patients/${pid}`, {
+          FirstName: contact.firstName,
+          LastName: contact.lastName || "Patient",
+          Mobile: formatPhone(contact.phone),
+          Email: contact.email,
+          DOB: foundPatient.DOB || "1990-01-01T00:00:00Z", // Keep existing or default
+          Gender: foundPatient.Gender === 0 ? "Male" : (foundPatient.Gender === 1 ? "Male" : "Female"),
+          Status: "Active"
+        }, { headers });
+        console.log(`📝 Updated profile for patient ${pid}`);
+      } catch (err) {
+        console.warn(`⚠️ Could not update names for patient ${pid} (continuing anyway): ${err.message}`);
+      }
+
       return pid;
     }
 
@@ -151,7 +187,8 @@ export async function getOrCreateCarestackPatient(contact) {
       FirstName: contact.firstName,
       LastName: contact.lastName || "Patient",
       Email: contact.email || "",
-      DefaultLocationId: locationId, // 👈 KEY FIX: Assigned home office
+      Mobile: formatPhone(contact.phone), // 👈 FORMATTED: (123) 456-7890
+      DefaultLocationId: locationId, 
       DOB: "1990-01-01T00:00:00Z", 
       Gender: "Male",              
       MaritalStatus: "Single",     
