@@ -145,8 +145,9 @@ export async function findGHLAppointmentByTime(calendarId, contactId, startTime)
   const startObj = new Date(startTime);
   const startDate = new Date(startObj.getTime() - 30 * 60000).toISOString();
   const endDate = new Date(startObj.getTime() + 30 * 60000).toISOString();
+  const locationId = process.env.GHL_LOCATION_ID;
 
-  const url = `${GHL_BASE_URL}/calendars/events?calendarId=${calendarId}&startTime=${startDate}&endTime=${endDate}`;
+  const url = `${GHL_BASE_URL}/calendars/events?calendarId=${calendarId}&locationId=${locationId}&startTime=${startDate}&endTime=${endDate}`;
 
   try {
     const res = await axios.get(url, { headers });
