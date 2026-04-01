@@ -540,7 +540,15 @@ async function syncRecentAppointments() {
         if (notes.includes("source:ghl")) continue;
         
         const ghlId = extractIdFromNotes(notes, "ghl_id");
-        // 2. Reuse webhook logic (Handles both create & update/cancel)
+
+        // 2. Skip cancelled/deleted appointments that were never synced to GHL
+        //    There's nothing to cancel if it was never created in GHL
+        if ((status === "Cancelled" || status === "Deleted") && !ghlId) {
+          console.log(`⏭️ Appt ${apptId} is ${status} and was never in GHL. Skipping.`);
+          continue; // No need to cache — just skip every time (harmless)
+        }
+
+        // 3. Reuse webhook logic (Handles both create & update/cancel)
         const mockStatus = (status === "Cancelled" || status === "Deleted") ? "Cancelled" : "Scheduled";
         
         const mockWebhookBody = {
