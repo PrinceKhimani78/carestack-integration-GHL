@@ -433,34 +433,36 @@ async function syncRecentAppointments() {
       console.log(`🔍 Found ${appointments.length} modification(s) in window.`);
       
       for (const appt of appointments) {
-        // Standardize keys (Sync API results are typically capitalized)
-        const notes = appt.Notes || "";
-        const apptId = appt.Id || appt.AppointmentId;
-        const patientName = appt.PatientName || "Patient";
-        const status = appt.Status || appt.StatusName || "Active";
+        // 🔍 Mapping: Handle both Case-Sensitivities (Sync API is lowercase, Webhooks are Uppercase)
+        const notes = appt.notes || appt.Notes || "";
+        const apptId = appt.id || appt.Id || appt.AppointmentId;
+        const patientId = appt.patientId || appt.PatientId;
+        const status = appt.status || appt.Status || "Active";
+        const startTime = appt.startDateTime || appt.StartTime || appt.DateTime;
+        const endTime = appt.endDateTime || appt.EndTime;
 
         // 1. Loop Prevention + Synced Status Check
         if (notes.includes("source:ghl")) continue;
         
         const ghlId = extractIdFromNotes(notes, "ghl_id");
         if (ghlId) {
-          // If already synced, but we're in the sync loop, it means it was modified (Updated/Cancelled)
-          console.log(`🔄 Modification detected for already-synced Appt ${apptId} (Status: ${status})...`);
+          console.log(`🔄 Modification detected for Appt ${apptId} (Status: ${status})...`);
         } else {
-          console.log(`✨ Found unsynced appointment ${apptId} for ${patientName}. Syncing to GHL now...`);
+          console.log(`✨ Found unsynced appointment ${apptId} (Status: ${status}). Syncing to GHL...`);
         }
         
         // 2. Reuse webhook logic (Handles both create & update/cancel)
-        const mockEvent = (status.includes("Cancelled") || status.includes("Deleted")) ? "Cancelled" : "Scheduled";
+        const mockStatus = (status === "Cancelled" || status === "Deleted") ? "Cancelled" : "Scheduled";
+        
         const mockWebhookBody = {
-          event: mockEvent,
+          event: mockStatus,
           data: {
             NewAppointment: {
               AppointmentId: apptId,
+              PatientId: patientId, // Crucial for looking up the patient!
               Notes: notes,
-              PatientName: patientName,
-              StartTime: appt.StartTime || appt.DateTime,
-              EndTime: appt.EndTime
+              StartTime: startTime,
+              EndTime: endTime
             }
           }
         };
