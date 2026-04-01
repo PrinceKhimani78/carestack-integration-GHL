@@ -74,35 +74,42 @@ export async function getOrCreateCarestackPatient(contact) {
   const headers = getCarestackHeaders();
 
   try {
-    // 1. Search by email
-    if (contact.email) {
-      const searchUrl = `${BASE_URL}/api/v1.0/patients?email=${encodeURIComponent(contact.email)}`;
-      console.log(`🌐 Searching CareStack: ${searchUrl}`);
-      const res = await axios.get(searchUrl, { headers });
-      if (res.data?.length > 0) return res.data[0].patientId;
-    }
-
-    // 2. Search by phone
-    const phone = contact.phone || contact.mobilePhone;
-    if (phone) {
-      const searchUrl = `${BASE_URL}/api/v1.0/patients?phone=${encodeURIComponent(phone)}`;
-      console.log(`🌐 Searching CareStack: ${searchUrl}`);
-      const res = await axios.get(searchUrl, { headers });
-      if (res.data?.length > 0) return res.data[0].patientId;
-    }
-
-    // 3. Create NEW patient
-    console.log(`👤 Patient not found in CareStack — creating new one for ${contact.firstName}`);
-    const createRes = await axios.post(`${BASE_URL}/api/v1.0/patients`, {
-      firstName: contact.firstName,
-      lastName: contact.lastName || "",
-      email: contact.email || "",
-      mobilePhone: phone || ""
+    // 1. Search by email or name
+    const searchTerm = contact.email || `${contact.firstName} ${contact.lastName}`;
+    const searchUrl = `${BASE_URL}/api/v1.0/patients/search`;
+    
+    console.log(`🌐 Searching CareStack: ${searchUrl} (Term: ${searchTerm})`);
+    
+    const searchRes = await axios.post(searchUrl, {
+      SearchTerm: searchTerm,
+      Limit: 1
     }, { headers });
 
-    return createRes.data?.patientId;
+    // The doc shows a single object or array — let's handle both
+    const patients = Array.isArray(searchRes.data) ? searchRes.data : [searchRes.data];
+    if (patients.length > 0 && patients[0].PatientId) {
+      console.log(`✅ Found existing patient: ${patients[0].PatientId}`);
+      return patients[0].PatientId;
+    }
+
+    // 2. Create NEW patient if not found
+    console.log(`👤 Patient not found — creating new one for ${contact.firstName} ${contact.lastName}`);
+    const createRes = await axios.post(`${BASE_URL}/api/v1.0/patients`, {
+      FirstName: contact.firstName,
+      LastName: contact.lastName || "Patient",
+      Email: contact.email || "",
+      Mobile: contact.phone || "",
+      // REQUIRED FIELDS PER DOC:
+      DOB: "1990-01-01T00:00:00Z", // Default placeholder
+      Gender: "NotSet",            // Enum: Male, Female, Other, NotSet
+      MaritalStatus: "NotApplicable",// Enum: Single, Married, etc.
+      Status: "Active"
+    }, { headers });
+
+    return createRes.data?.Id || createRes.data?.patientId;
   } catch (err) {
-    throw new Error(`CareStack Patient API Error: ${err.response?.status} - ${err.message}`);
+    console.error(`❌ CareStack Patient API Error: ${err.response?.status} - ${JSON.stringify(err.response?.data || err.message)}`);
+    throw err;
   }
 }
 
