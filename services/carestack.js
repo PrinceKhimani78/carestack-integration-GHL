@@ -159,19 +159,19 @@ export async function getOrCreateCarestackPatient(contact) {
       
       // Update Name/Phone in CareStack to match GHL latest
       try {
-        await axios.put(`${BASE_URL}/api/v1.0/patients`, {
-          Id: pid, // 👈 ID goes in body now
+        const updateRes = await axios.put(`${BASE_URL}/api/v1.0/patients`, {
+          Id: pid,
           FirstName: contact.firstName,
           LastName: contact.lastName || "Patient",
           Mobile: formatPhone(contact.phone),
           Email: contact.email,
-          DOB: foundPatient.dob || "1990-01-01T00:00:00Z",
+          DOB: foundPatient.dob ? (foundPatient.dob.includes('Z') ? foundPatient.dob : foundPatient.dob + 'Z') : "1990-01-01T00:00:00Z",
           Gender: foundPatient.gender === 0 ? "Male" : (foundPatient.gender === 1 ? "Male" : "Female"),
           Status: "Active"
         }, { headers });
-        console.log(`📝 Updated profile for patient ${pid}`);
+        console.log(`📝 Updated profile for ${contact.firstName} (Safe ID: ${pid}) | Logic: Upsert`);
       } catch (err) {
-        console.warn(`⚠️ Could not update names for patient ${pid} (continuing anyway): ${err.message}`);
+        console.warn(`⚠️ Name Update Failed (Status: ${err.response?.status}): ${JSON.stringify(err.response?.data || err.message)}`);
       }
 
       return pid;
