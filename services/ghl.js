@@ -35,31 +35,40 @@ function getGHLHeaders() {
 // ===============================
 export async function getOrCreateGHLContact(patient) {
   const headers = getGHLHeaders();
+  const locationId = process.env.GHL_LOCATION_ID;
   
-  // 1. Search by email first
-  if (patient.email) {
-    const searchRes = await axios.get(`${GHL_BASE_URL}/contacts/search?query=${patient.email}`, { headers });
-    if (searchRes.data?.contacts?.length > 0) return searchRes.data.contacts[0].id;
-  }
-  
-  // 2. Search by phone
-  if (patient.mobilePhone || patient.homePhone) {
-    const phone = patient.mobilePhone || patient.homePhone;
-    const searchRes = await axios.get(`${GHL_BASE_URL}/contacts/search?query=${phone}`, { headers });
-    if (searchRes.data?.contacts?.length > 0) return searchRes.data.contacts[0].id;
-  }
+  try {
+    // 1. Search by email first
+    if (patient.email) {
+      const searchRes = await axios.get(`${GHL_BASE_URL}/contacts/?locationId=${locationId}&query=${patient.email}`, { headers });
+      if (searchRes.data?.contacts?.length > 0) return searchRes.data.contacts[0].id;
+    }
+    
+    // 2. Search by phone
+    if (patient.mobilePhone || patient.homePhone) {
+      const phone = patient.mobilePhone || patient.homePhone;
+      // encode phone just in case it has + or spaces
+      const encodedPhone = encodeURIComponent(phone);
+      const searchRes = await axios.get(`${GHL_BASE_URL}/contacts/?locationId=${locationId}&query=${encodedPhone}`, { headers });
+      if (searchRes.data?.contacts?.length > 0) return searchRes.data.contacts[0].id;
+    }
 
-  // 3. Not found? Create NEW contact
-  console.log(`👤 Contact not found in GHL — creating new one for ${patient.firstName || patient.patientName}`);
-  const createRes = await axios.post(`${GHL_BASE_URL}/contacts/`, {
-    firstName: patient.firstName || patient.patientName,
-    lastName: patient.lastName || "",
-    email: patient.email || "",
-    phone: patient.mobilePhone || patient.homePhone || "",
-    locationId: process.env.GHL_LOCATION_ID
-  }, { headers });
+    // 3. Not found? Create NEW contact
+    const safeFirstName = patient.firstName || patient.patientName || "Unknown";
+    console.log(`👤 Contact not found in GHL — creating new one for ${safeFirstName}`);
+    const createRes = await axios.post(`${GHL_BASE_URL}/contacts/`, {
+      firstName: safeFirstName,
+      lastName: patient.lastName || "",
+      email: patient.email || "",
+      phone: patient.mobilePhone || patient.homePhone || "",
+      locationId: locationId
+    }, { headers });
 
-  return createRes.data?.contact?.id;
+    return createRes.data?.contact?.id || createRes.data?.id;
+  } catch (err) {
+    console.error(`❌ GHL Contact Error: ${err.message} - ${JSON.stringify(err.response?.data || 'No detailed error')}`);
+    throw err;
+  }
 }
 
 // ===============================

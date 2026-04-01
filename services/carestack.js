@@ -381,13 +381,18 @@ export async function handleCarestackWebhook(body, headers) {
     return;
   }
 
-  const finalStartTime = appointment.startTime || appointment.StartTime || appointment.startDateTime || appointment.DateTime;
-  const finalEndTime = appointment.endTime || appointment.EndTime || appointment.endDateTime;
+  const rawStartTime = appointment.startTime || appointment.StartTime || appointment.startDateTime || appointment.DateTime;
+  const rawEndTime = appointment.endTime || appointment.EndTime || appointment.endDateTime;
 
-  if (!finalStartTime) {
+  if (!rawStartTime) {
     console.warn("⚠️ Cannot sync to GHL: No StartTime found in appointment data.");
     return;
   }
+
+  const finalStartTime = new Date(rawStartTime).toISOString();
+  const finalEndTime = rawEndTime 
+    ? new Date(rawEndTime).toISOString()
+    : new Date(new Date(finalStartTime).getTime() + 30 * 60000).toISOString(); // fallback 30 mins
 
   const payload = {
     calendarId: process.env.GHL_CALENDAR_ID,
@@ -398,6 +403,13 @@ export async function handleCarestackWebhook(body, headers) {
     title: appointment.patientName,
     appointmentStatus: (event === "Cancelled" || event === "Deleted") ? "cancelled" : "confirmed",
   };
+
+  console.log("📦 GHL Payload:", JSON.stringify(payload, null, 2));
+
+  if (!payload.startTime || !payload.endTime || !payload.contactId) {
+    console.warn("⚠️ Invalid payload — skipping GHL sync", payload);
+    return;
+  }
 
   try {
     if (ghlId) {
@@ -419,7 +431,11 @@ export async function handleCarestackWebhook(body, headers) {
       }
     }
   } catch (err) {
-    console.error(`❌ GHL Push Failed: ${err.message} - ${JSON.stringify(err.response?.data || 'No detailed error')}`);
+    console.error("❌ GHL ERROR FULL:", {
+      status: err.response?.status,
+      data: err.response?.data,
+      payload: payload
+    });
     throw err;
   }
 }
