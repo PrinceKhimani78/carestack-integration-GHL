@@ -15,35 +15,16 @@ import { extractIdFromNotes } from "../utils/helpers.js";
 const BASE_URL = process.env.CARESTACK_BASE_URL; // https://dentistforchickens.carestack.au
 
 // ===============================
-// 🔐 CARESTACK AUTH
-// OAuth2 password grant flow
-// Token endpoint: {BASE_URL}/connect/token
+// 🔐 CARESTACK AUTH HEADERS
+// As per documentation, we pass 3 keys in the header
 // ===============================
-async function getCarestackToken() {
-  const authUrl = `https://api-auz.carestack.com/connect/token`;
-  console.log(`🔑 Attempting CareStack Auth: ${authUrl}`);
-  
-  try {
-    const res = await axios.post(
-      authUrl,
-      new URLSearchParams({
-        grant_type: "password",
-        client_id: process.env.CARESTACK_CLIENT_ID,
-        client_secret: process.env.CARESTACK_CLIENT_SECRET,
-        username: process.env.CARESTACK_VENDOR_KEY,
-        password: process.env.CARESTACK_ACCOUNT_KEY,
-      }),
-      {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      }
-    );
-
-    console.log("✅ CareStack token acquired");
-    return res.data.access_token;
-  } catch (err) {
-    console.error(`❌ CareStack Auth Failed: ${err.response?.status} - ${err.message}`);
-    throw err;
-  }
+function getCarestackHeaders() {
+  return {
+    VendorKey: process.env.CARESTACK_VENDOR_KEY,
+    AccountKey: process.env.CARESTACK_ACCOUNT_KEY,
+    AccountId: process.env.CARESTACK_ACCOUNT_ID, // 👈 NEW: Needs to be added to .env
+    "Content-Type": "application/json",
+  };
 }
 
 // ===============================
@@ -51,14 +32,10 @@ async function getCarestackToken() {
 // GET {BASE_URL}/api/v1.0/appointments/{id}
 // ===============================
 async function getAppointmentDetails(appointmentId) {
-  const token = await getCarestackToken();
-
   const res = await axios.get(
     `${BASE_URL}/api/v1.0/appointments/${appointmentId}`,
     {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: getCarestackHeaders(),
     }
   );
 
@@ -72,8 +49,6 @@ async function getAppointmentDetails(appointmentId) {
 // so we can link the two systems
 // ===============================
 async function updateCarestackAppointmentNotes(appointmentId, ghlId, existingNotes) {
-  const token = await getCarestackToken();
-
   // Preserve existing notes — just append ghl_id
   const updatedNotes = existingNotes
     ? `${existingNotes} | ghl_id:${ghlId}`
@@ -85,10 +60,7 @@ async function updateCarestackAppointmentNotes(appointmentId, ghlId, existingNot
       notes: updatedNotes,
     },
     {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
+      headers: getCarestackHeaders(),
     }
   );
 
@@ -99,8 +71,7 @@ async function updateCarestackAppointmentNotes(appointmentId, ghlId, existingNot
 // SEARCH OR CREATE PATIENT IN CARESTACK
 // ===============================
 export async function getOrCreateCarestackPatient(contact) {
-  const token = await getCarestackToken();
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = getCarestackHeaders();
 
   try {
     // 1. Search by email
@@ -140,8 +111,6 @@ export async function getOrCreateCarestackPatient(contact) {
 // POST {BASE_URL}/api/v1.0/appointments
 // ===============================
 export async function createCarestackAppointment(data) {
-  const token = await getCarestackToken();
-
   const res = await axios.post(
     `${BASE_URL}/api/v1.0/appointments`,
     {
@@ -152,10 +121,7 @@ export async function createCarestackAppointment(data) {
       notes: `ghl_id:${data.ghlAppointmentId} | source:ghl`,
     },
     {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
+      headers: getCarestackHeaders(),
     }
   );
 
@@ -169,8 +135,6 @@ export async function createCarestackAppointment(data) {
 // Called when GHL updates an appointment
 // ===============================
 export async function updateCarestackAppointment(appointmentId, data) {
-  const token = await getCarestackToken();
-
   await axios.put(
     `${BASE_URL}/api/v1.0/appointments/${appointmentId}`,
     {
@@ -179,10 +143,7 @@ export async function updateCarestackAppointment(appointmentId, data) {
       patientName: data.title,
     },
     {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
+      headers: getCarestackHeaders(),
     }
   );
 
