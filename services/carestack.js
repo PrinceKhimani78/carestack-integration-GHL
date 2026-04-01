@@ -413,12 +413,20 @@ export async function handleCarestackWebhook(body, headers) {
   // Ensure it formats correctly as Sydney Time (+11:00)
   const formatWithTZ = (timeStr) => {
     if (!timeStr) return null;
-    // If it already has a TZ offset or Z, leave it alone. 
-    // Otherwise, append the Sydney offset (+11:00)
-    if (timeStr.includes("+") || (timeStr.includes("-") && timeStr.length > 10) || timeStr.endsWith("Z")) {
+    
+    // Check if the string already has a timezone indicator:
+    // 1. Ends with 'Z'
+    // 2. Contains '+'
+    // 3. Contains a '-' AFTER the date part (e.g., 2026-05-04T10:00:00-05:00)
+    const hasTZ = timeStr.endsWith("Z") || timeStr.includes("+") || (timeStr.lastIndexOf("-") > 10);
+    
+    if (hasTZ) {
       return new Date(timeStr).toISOString();
     }
-    return new Date(`${timeStr}+11:00`).toISOString();
+    
+    // Default to Sydney (+11:00) for clean strings like '2026-05-04T10:45:00'
+    const cleanTime = timeStr.replace(" ", "T"); // Ensure ISO format
+    return new Date(`${cleanTime}+11:00`).toISOString();
   };
 
   const finalStartTime = formatWithTZ(rawStartTime);
