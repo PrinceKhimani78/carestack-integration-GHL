@@ -141,20 +141,19 @@ export async function getGHLAppointment(eventId) {
 // ===============================
 export async function findGHLAppointmentByTime(calendarId, contactId, startTime) {
   const headers = getGHLHeaders();
-  // Fetch appointments in a small window around the start time (1 hour window)
+  // Fetch events in a window around the start time (30 min window)
   const startObj = new Date(startTime);
-  const startDate = startObj.getTime();
-  const endDate = startDate + 60000; // 1 minute window for exact match
+  const startDate = new Date(startObj.getTime() - 30 * 60000).toISOString();
+  const endDate = new Date(startObj.getTime() + 30 * 60000).toISOString();
+
+  const url = `${GHL_BASE_URL}/calendars/events?calendarId=${calendarId}&startTime=${startDate}&endTime=${endDate}`;
 
   try {
-    const res = await axios.get(
-      `${GHL_BASE_URL}/calendars/events/appointments?calendarId=${calendarId}&startTime=${startDate}&endTime=${endDate}`,
-      { headers }
-    );
-    // Find one that matches the contactId
-    return res.data?.events?.find(e => e.contactId === contactId);
+    const res = await axios.get(url, { headers });
+    const events = res.data?.events || [];
+    return events.find(e => e.contactId === contactId);
   } catch (err) {
-    console.warn(`⚠️ GHL Search Failed: ${err.message}`);
+    console.warn(`⚠️ GHL Search Failed: ${err.message} | URL: ${url} | Response: ${JSON.stringify(err.response?.data || 'None')}`);
     return null;
   }
 }
