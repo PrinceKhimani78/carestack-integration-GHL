@@ -279,19 +279,19 @@ export async function updateCarestackAppointment(appointmentId, data) {
 }
 
 // ===============================
-// CANCEL APPOINTMENT IN CARESTACK
-// PUT {BASE_URL}/api/v1.0/appointments/{id}/cancel
+// DELETE APPOINTMENT IN CARESTACK
+// DELETE {BASE_URL}/api/v1.0/appointments/{id}
+// ⚠️ Using DELETE instead of /cancel because:
+//   - PUT /cancel keeps the slot BLOCKED (causes booking conflicts)
+//   - DELETE fully removes the appointment and FREES the slot
 // ===============================
 export async function cancelCarestackAppointment(appointmentId) {
-  await axios.put(`${BASE_URL}/api/v1.0/appointments/${appointmentId}/cancel`, {
-    Reason: "PatientNotified",
-    Notes: "Cancelled via GHL sync",
-    CodeRetained: false,
-    ResheduleEnabled: false,
-    InactivatedBy: "Patient"
-  }, { headers: getCarestackHeaders() });
+  await axios.delete(
+    `${BASE_URL}/api/v1.0/appointments/${appointmentId}`,
+    { headers: getCarestackHeaders() }
+  );
 
-  console.log(`✅ Cancelled CareStack appointment: ${appointmentId}`);
+  console.log(`✅ Deleted CareStack appointment: ${appointmentId} (slot freed)`);
 }
 
 // ===============================
