@@ -410,10 +410,20 @@ export async function handleCarestackWebhook(body, headers) {
     return;
   }
 
-  // Ensure it formats correctly regardless of timezone
-  const finalStartTime = new Date(rawStartTime).toISOString();
+  // Ensure it formats correctly as Sydney Time (+11:00)
+  const formatWithTZ = (timeStr) => {
+    if (!timeStr) return null;
+    // If it already has a TZ offset or Z, leave it alone. 
+    // Otherwise, append the Sydney offset (+11:00)
+    if (timeStr.includes("+") || (timeStr.includes("-") && timeStr.length > 10) || timeStr.endsWith("Z")) {
+      return new Date(timeStr).toISOString();
+    }
+    return new Date(`${timeStr}+11:00`).toISOString();
+  };
+
+  const finalStartTime = formatWithTZ(rawStartTime);
   const finalEndTime = rawEndTime 
-    ? new Date(rawEndTime).toISOString()
+    ? formatWithTZ(rawEndTime)
     : new Date(new Date(finalStartTime).getTime() + 30 * 60000).toISOString(); // fallback 30 mins
 
   const payload = {
