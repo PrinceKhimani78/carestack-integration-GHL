@@ -333,12 +333,40 @@ export async function handleCarestackWebhook(body, headers) {
     }
   }
 
+  // 1.5 Fetch Full Patient Details to assure we have Name/Email for GHL Contact creation
+  const patientId = 
+    appointment?.PatientId || appointment?.patientId || 
+    body.data?.NewAppointment?.PatientId || 
+    body.data?.OldAppointment?.PatientId;
+
+  if (patientId) {
+    console.log(`👤 Fetching full details for Patient ${patientId}...`);
+    try {
+      const pRes = await axios.get(`${BASE_URL}/api/v1.0/patients/${patientId}`, { headers: getCarestackHeaders() });
+      const fullPatient = pRes.data;
+      if (fullPatient) {
+        // Hydrate the appointment with full patient details
+        appointment = {
+          ...appointment,
+          firstName: fullPatient.FirstName || fullPatient.firstName || "Patient",
+          lastName: fullPatient.LastName || fullPatient.lastName || "",
+          email: fullPatient.Email || fullPatient.email || "",
+          mobilePhone: fullPatient.Mobile || fullPatient.mobilePhone || fullPatient.HomePhone || fullPatient.homePhone || "",
+        };
+        appointment.patientName = `${appointment.firstName} ${appointment.lastName}`.trim();
+      }
+    } catch (patErr) {
+      console.warn(`⚠️ Could not fetch full profile for PatientId ${patientId}: ${patErr.message}`);
+    }
+  }
+
   // 2. Check if already synced (NO DB → check metadata in notes)
   //    We store "ghl_id:<id>" in CareStack appointment notes
-  const ghlId = extractIdFromNotes(appointment?.notes, "ghl_id");
+  const ghlId = extractIdFromNotes(appointment?.notes || appointment?.Notes, "ghl_id");
 
   // 3. Check for loop prevention — if this was created from GHL, skip
-  if (appointment?.notes?.includes("source:ghl")) {
+  const notesString = appointment?.notes || appointment?.Notes || "";
+  if (notesString.includes("source:ghl")) {
     console.log("🔁 Skipping — originated from GHL (loop prevention)");
     return;
   }
