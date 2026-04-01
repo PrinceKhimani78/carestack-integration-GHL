@@ -128,6 +128,7 @@ export async function getGHLAppointment(eventId) {
 // Events: Create, Update, Cancel
 // ===============================
 export async function handleGHLWebhook(body) {
+  console.log("🧐 DEBUG — Full GHL Webhook Body:", JSON.stringify(body, null, 2));
   const event = body.type;
 
   // Filter for events we care about
