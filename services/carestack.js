@@ -44,7 +44,9 @@ async function getCarestackLocationId() {
 
 async function getCarestackOperatoryId() {
   if (cachedOperatoryId) return cachedOperatoryId;
-  const res = await axios.get(`${BASE_URL}/api/v1.0/operatory`, { headers: getCarestackHeaders() });
+  const url = `${BASE_URL}/api/v1.0/operatories`;
+  console.log(`📡 Fetching Operatories: ${url}`);
+  const res = await axios.get(url, { headers: getCarestackHeaders() });
   if (res.data?.length > 0) {
     cachedOperatoryId = res.data[0].Id || res.data[0].id;
     console.log(`📍 Discovered Operatory ID: ${cachedOperatoryId}`);
