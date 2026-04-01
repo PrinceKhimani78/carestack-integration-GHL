@@ -15,6 +15,11 @@ import {
 import { formatWithTZ } from "../utils/helpers.js";
 import { saveSyncMapping, getCarestackIdFromGhl } from "./supabase.js";
 
+// ===============================
+// 🔐 GHL CONFIG & STATE
+// ===============================
+const GHL_API_KEY = process.env.GHL_ACCESS_TOKEN;
+const GHL_BASE_URL = "https://services.leadconnectorhq.com";
 const GHL_API_VERSION = "2021-07-28";
 
 // Shared headers for all GHL API calls
