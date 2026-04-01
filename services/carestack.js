@@ -457,7 +457,10 @@ export async function handleCarestackWebhook(body, headers) {
 
     if (errorMessage.includes("slot you have selected is no longer available")) {
       console.warn(`⚠️ Slot conflict in GHL — skipping sync for Appt ${appointmentId}`);
-      return; // Stop here, don't throw (treat as handled)
+      // Throw a special marker error so the polling loop can cache this and stop retrying
+      const slotErr = new Error("SLOT_CONFLICT");
+      slotErr.isSlotConflict = true;
+      throw slotErr;
     }
 
     console.error("❌ GHL ERROR FULL:", {
@@ -549,10 +552,14 @@ async function syncRecentAppointments() {
         try {
           await handleCarestackWebhook(mockWebhookBody, {});
         } catch (innerErr) {
-          console.warn(`⏳ Mark Appt ${apptId} as failed for this session.`);
+          if (innerErr.isSlotConflict) {
+            // GHL calendar is full at this slot — add to failed cache so we stop spamming it
+            console.warn(`🚫 Slot conflict for Appt ${apptId} — caching for 1 hour.`);
+          } else {
+            console.warn(`⏳ Sync failed for Appt ${apptId}: ${innerErr.message}`);
+          }
           failedAppointments.add(apptId);
-          // Optional: clear from cache after 1 hour if you want to retry later
-          setTimeout(() => failedAppointments.delete(apptId), 3600000);
+          setTimeout(() => failedAppointments.delete(apptId), 3600000); // Retry after 1 hour
         }
       }
     }
