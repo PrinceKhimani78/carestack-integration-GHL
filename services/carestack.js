@@ -14,8 +14,10 @@ import { extractIdFromNotes } from "../utils/helpers.js";
 
 const BASE_URL = process.env.CARESTACK_BASE_URL; // https://dentistforchickens.carestack.au
 
-// Store the discovered location ID to avoid repeated calls
+// Store discovered IDs to avoid repeated API calls
 let cachedLocationId = null;
+let cachedOperatoryId = null;
+let cachedProviderId = null;
 
 // ===============================
 // 🔐 CARESTACK AUTH HEADERS
@@ -29,21 +31,57 @@ function getCarestackHeaders() {
     "Content-Type": "application/json",
   };
 }
-
 async function getCarestackLocationId() {
   if (cachedLocationId) return cachedLocationId;
-
-  const res = await axios.get(`${BASE_URL}/api/v1.0/locations`, {
-    headers: getCarestackHeaders(),
-  });
-
+  const res = await axios.get(`${BASE_URL}/api/v1.0/locations`, { headers: getCarestackHeaders() });
   if (res.data?.length > 0) {
     cachedLocationId = res.data[0].Id || res.data[0].id;
-    console.log(`📍 Discovered Practice Location ID: ${cachedLocationId}`);
+    console.log(`📍 Discovered Location ID: ${cachedLocationId}`);
     return cachedLocationId;
   }
-
   return null;
+}
+
+async function getCarestackOperatoryId() {
+  if (cachedOperatoryId) return cachedOperatoryId;
+  const res = await axios.get(`${BASE_URL}/api/v1.0/operatory`, { headers: getCarestackHeaders() });
+  if (res.data?.length > 0) {
+    cachedOperatoryId = res.data[0].Id || res.data[0].id;
+    console.log(`📍 Discovered Operatory ID: ${cachedOperatoryId}`);
+    return cachedOperatoryId;
+  }
+  return null;
+}
+
+async function getCarestackProviderId() {
+  if (cachedProviderId) return cachedProviderId;
+  try {
+    const res = await axios.get(`${BASE_URL}/api/v1.0/providers`, { headers: getCarestackHeaders() });
+    if (res.data?.length > 0) {
+      cachedProviderId = res.data[0].Id || res.data[0].id;
+      console.log(`📍 Discovered Provider ID: ${cachedProviderId}`);
+      return cachedProviderId;
+    }
+  } catch (e) {
+    console.log("⚠️ Could not list providers — using default ID 1");
+    return 1;
+  }
+  return 1;
+}
+
+// ===============================
+// FETCH APPOINTMENT DETAILS
+// GET {BASE_URL}/api/v1.0/appointments/{id}
+// ===============================
+async function getAppointmentDetails(appointmentId) {
+  const res = await axios.get(
+    `${BASE_URL}/api/v1.0/appointments/${appointmentId}`,
+    {
+      headers: getCarestackHeaders(),
+    }
+  );
+
+  return res.data;
 }
 
 // ===============================
@@ -131,21 +169,37 @@ export async function getOrCreateCarestackPatient(contact) {
 // POST {BASE_URL}/api/v1.0/appointments
 // ===============================
 export async function createCarestackAppointment(data) {
+  const locId = await getCarestackLocationId();
+  const opId = await getCarestackOperatoryId();
+  const provId = await getCarestackProviderId();
+
+  // Calculate duration in minutes (default 30 if failed)
+  const start = new Date(data.startTime);
+  const end = new Date(data.endTime);
+  const duration = Math.round((end - start) / (1000 * 60)) || 30;
+
+  const appointmentPayload = {
+    PatientId: parseInt(data.patientId),
+    LocationId: locId,
+    OperatoryId: opId,
+    DateTime: data.startTime,
+    Duration: duration,
+    ProviderIds: [provId],
+    BookingMode: "Online",
+    Notes: `ghl_id:${data.ghlAppointmentId} | source:ghl`,
+  };
+
+  console.log(`📡 Creating CareStack Appointment:`, JSON.stringify(appointmentPayload, null, 2));
+
   const res = await axios.post(
     `${BASE_URL}/api/v1.0/appointments`,
-    {
-      startTime: data.startTime,
-      endTime: data.endTime,
-      patientName: data.title,
-      patientId: data.patientId, // Now correctly linked
-      notes: `ghl_id:${data.ghlAppointmentId} | source:ghl`,
-    },
+    appointmentPayload,
     {
       headers: getCarestackHeaders(),
     }
   );
 
-  console.log(`✅ Created CareStack appointment: ${res.data?.appointmentId || "unknown"}`);
+  console.log(`✅ Created CareStack appointment!`);
   return res.data;
 }
 
