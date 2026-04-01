@@ -165,9 +165,10 @@ export async function getOrCreateCarestackPatient(contact) {
           LastName: contact.lastName || "Patient",
           Mobile: formatPhone(contact.phone),
           Email: contact.email,
+          MaritalStatus: "Single", // 👈 REQUIRED: Fixes 500 error
           DefaultLocationId: foundPatient.defaultLocationID || foundPatient.DefaultLocationId || 1,
-          DOB: foundPatient.dob ? (foundPatient.dob.includes('T') ? foundPatient.dob : foundPatient.dob + 'T00:00:00') : "1990-01-01T00:00:00",
-          Gender: foundPatient.gender === 0 ? "Male" : (foundPatient.gender === 1 ? "Male" : "Female"),
+          DOB: foundPatient.dob ? (foundPatient.dob.includes('Z') ? foundPatient.dob : foundPatient.dob + 'Z') : "1990-01-01T00:00:00Z",
+          Gender: foundPatient.gender === 0 ? "Male" : (foundPatient.gender === 1 ? "Male" : (foundPatient.gender === "Male" ? "Male" : "Female")),
           Status: "Active"
         };
 
