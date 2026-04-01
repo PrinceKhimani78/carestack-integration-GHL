@@ -323,10 +323,10 @@ export async function handleCarestackWebhook(body, headers) {
     if (event === "Deleted" || event === "Cancelled") {
       console.log(`ℹ️ Appointment removed from CareStack — Using archived data for cancellation.`);
       appointment = {
-        notes: body.data?.OldAppointment?.Notes,
-        patientName: body.data?.OldAppointment?.PatientName || "Patient",
-        startTime: body.data?.OldAppointment?.StartTime,
-        endTime: body.data?.OldAppointment?.EndTime
+        notes: body.data?.OldAppointment?.Notes || body.data?.NewAppointment?.Notes,
+        patientName: body.data?.OldAppointment?.PatientName || body.data?.NewAppointment?.PatientName || "Patient",
+        startTime: body.data?.OldAppointment?.StartTime || body.data?.NewAppointment?.StartTime,
+        endTime: body.data?.OldAppointment?.EndTime || body.data?.NewAppointment?.EndTime
       };
     } else {
       throw err;
@@ -381,8 +381,8 @@ export async function handleCarestackWebhook(body, headers) {
     return;
   }
 
-  const rawStartTime = appointment.startTime || appointment.StartTime || appointment.startDateTime || appointment.DateTime;
-  const rawEndTime = appointment.endTime || appointment.EndTime || appointment.endDateTime;
+  const rawStartTime = appointment.startTime || appointment.StartTime || appointment.startDateTime || appointment.DateTime || body.data?.NewAppointment?.StartTime || body.data?.OldAppointment?.StartTime;
+  const rawEndTime = appointment.endTime || appointment.EndTime || appointment.endDateTime || body.data?.NewAppointment?.EndTime || body.data?.OldAppointment?.EndTime;
 
   if (!rawStartTime) {
     console.warn("⚠️ Cannot sync to GHL: No StartTime found in appointment data.");
