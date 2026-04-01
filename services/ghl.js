@@ -103,9 +103,6 @@ export async function createGHLAppointment(data) {
 }
 
 // ===============================
-// UPDATE APPOINTMENT IN GHL
-// PUT /calendars/events/appointments/:eventId
-// ===============================
 export async function updateGHLAppointment(eventId, data) {
   await axios.put(
     `${GHL_BASE_URL}/calendars/events/appointments/${eventId}`,
