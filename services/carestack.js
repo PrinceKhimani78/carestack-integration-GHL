@@ -20,22 +20,30 @@ const BASE_URL = process.env.CARESTACK_BASE_URL; // https://dentistforchickens.c
 // Token endpoint: {BASE_URL}/connect/token
 // ===============================
 async function getCarestackToken() {
-  const res = await axios.post(
-    `${BASE_URL}/connect/token`,
-    new URLSearchParams({
-      grant_type: "password",
-      client_id: process.env.CARESTACK_CLIENT_ID,
-      client_secret: process.env.CARESTACK_CLIENT_SECRET,
-      username: process.env.CARESTACK_VENDOR_KEY,
-      password: process.env.CARESTACK_ACCOUNT_KEY,
-    }),
-    {
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    }
-  );
+  const authUrl = `${BASE_URL}/connect/token`;
+  console.log(`🔑 Attempting CareStack Auth: ${authUrl}`);
+  
+  try {
+    const res = await axios.post(
+      authUrl,
+      new URLSearchParams({
+        grant_type: "password",
+        client_id: process.env.CARESTACK_CLIENT_ID,
+        client_secret: process.env.CARESTACK_CLIENT_SECRET,
+        username: process.env.CARESTACK_VENDOR_KEY,
+        password: process.env.CARESTACK_ACCOUNT_KEY,
+      }),
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      }
+    );
 
-  console.log("🔑 CareStack token acquired");
-  return res.data.access_token;
+    console.log("✅ CareStack token acquired");
+    return res.data.access_token;
+  } catch (err) {
+    console.error(`❌ CareStack Auth Failed: ${err.response?.status} - ${err.message}`);
+    throw err;
+  }
 }
 
 // ===============================
@@ -94,29 +102,37 @@ export async function getOrCreateCarestackPatient(contact) {
   const token = await getCarestackToken();
   const headers = { Authorization: `Bearer ${token}` };
 
-  // 1. Search by email
-  if (contact.email) {
-    const res = await axios.get(`${BASE_URL}/api/v1.0/patients?email=${contact.email}`, { headers });
-    if (res.data?.length > 0) return res.data[0].patientId;
+  try {
+    // 1. Search by email
+    if (contact.email) {
+      const searchUrl = `${BASE_URL}/api/v1.0/patients?email=${encodeURIComponent(contact.email)}`;
+      console.log(`🌐 Searching CareStack: ${searchUrl}`);
+      const res = await axios.get(searchUrl, { headers });
+      if (res.data?.length > 0) return res.data[0].patientId;
+    }
+
+    // 2. Search by phone
+    const phone = contact.phone || contact.mobilePhone;
+    if (phone) {
+      const searchUrl = `${BASE_URL}/api/v1.0/patients?phone=${encodeURIComponent(phone)}`;
+      console.log(`🌐 Searching CareStack: ${searchUrl}`);
+      const res = await axios.get(searchUrl, { headers });
+      if (res.data?.length > 0) return res.data[0].patientId;
+    }
+
+    // 3. Create NEW patient
+    console.log(`👤 Patient not found in CareStack — creating new one for ${contact.firstName}`);
+    const createRes = await axios.post(`${BASE_URL}/api/v1.0/patients`, {
+      firstName: contact.firstName,
+      lastName: contact.lastName || "",
+      email: contact.email || "",
+      mobilePhone: phone || ""
+    }, { headers });
+
+    return createRes.data?.patientId;
+  } catch (err) {
+    throw new Error(`CareStack Patient API Error: ${err.response?.status} - ${err.message}`);
   }
-
-  // 2. Search by phone
-  const phone = contact.phone || contact.mobilePhone;
-  if (phone) {
-    const res = await axios.get(`${BASE_URL}/api/v1.0/patients?phone=${phone}`, { headers });
-    if (res.data?.length > 0) return res.data[0].patientId;
-  }
-
-  // 3. Create NEW patient
-  console.log(`👤 Patient not found in CareStack — creating new one for ${contact.firstName}`);
-  const createRes = await axios.post(`${BASE_URL}/api/v1.0/patients`, {
-    firstName: contact.firstName,
-    lastName: contact.lastName || "",
-    email: contact.email || "",
-    mobilePhone: phone || ""
-  }, { headers });
-
-  return createRes.data?.patientId;
 }
 
 // ===============================
