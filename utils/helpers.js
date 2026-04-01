@@ -14,7 +14,7 @@
 export function extractIdFromNotes(notes, key) {
   if (!notes) return null;
 
-  const regex = new RegExp(`${key}:(\\w+)`);
+  const regex = new RegExp(`${key}:([a-zA-Z0-9]+)`);
   const match = notes.match(regex);
   return match ? match[1] : null;
 }

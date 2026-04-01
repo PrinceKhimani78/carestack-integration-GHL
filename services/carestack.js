@@ -49,42 +49,44 @@ function getCarestackHeaders() {
 }
 async function getCarestackLocationId() {
   if (cachedLocationId) return cachedLocationId;
-  const res = await axios.get(`${BASE_URL}/api/v1.0/locations`, { headers: getCarestackHeaders() });
-  if (res.data?.length > 0) {
-    cachedLocationId = res.data[0].Id || res.data[0].id;
-    console.log(`📍 Discovered Location ID: ${cachedLocationId}`);
+  try {
+    const res = await axios.get(`${BASE_URL}/api/v1.0/locations`, { headers: getCarestackHeaders() });
+    const location = res.data?.find(l => l.IsActive || l.isActive) || res.data?.[0];
+    cachedLocationId = location?.Id || location?.id || 1;
+    console.log(`📍 Using Location ID: ${cachedLocationId}`);
     return cachedLocationId;
+  } catch (e) {
+    console.log("⚠️ Location list failed — using ID 1");
+    return 1;
   }
-  return null;
 }
 
 async function getCarestackOperatoryId() {
   if (cachedOperatoryId) return cachedOperatoryId;
-  const url = `${BASE_URL}/api/v1.0/operatories`;
-  console.log(`📡 Fetching Operatories: ${url}`);
-  const res = await axios.get(url, { headers: getCarestackHeaders() });
-  if (res.data?.length > 0) {
-    cachedOperatoryId = res.data[0].Id || res.data[0].id;
-    console.log(`📍 Discovered Operatory ID: ${cachedOperatoryId}`);
+  try {
+    const res = await axios.get(`${BASE_URL}/api/v1.0/operatories`, { headers: getCarestackHeaders() });
+    const operatory = res.data?.find(o => o.IsActive || o.isActive) || res.data?.[0];
+    cachedOperatoryId = operatory?.Id || operatory?.id || 1;
+    console.log(`📍 Using Operatory ID: ${cachedOperatoryId}`);
     return cachedOperatoryId;
+  } catch (e) {
+    console.log("⚠️ Operatory list failed — using ID 1");
+    return 1;
   }
-  return null;
 }
 
 async function getCarestackProviderId() {
   if (cachedProviderId) return cachedProviderId;
   try {
     const res = await axios.get(`${BASE_URL}/api/v1.0/providers`, { headers: getCarestackHeaders() });
-    if (res.data?.length > 0) {
-      cachedProviderId = res.data[0].Id || res.data[0].id;
-      console.log(`📍 Discovered Provider ID: ${cachedProviderId}`);
-      return cachedProviderId;
-    }
+    const provider = res.data?.find(p => p.IsActive || p.isActive) || res.data?.[0];
+    cachedProviderId = provider?.Id || provider?.id || 2; // Default to 2 based on previous logs
+    console.log(`📍 Using Provider ID: ${cachedProviderId}`);
+    return cachedProviderId;
   } catch (e) {
-    console.log("⚠️ Could not list providers — using default ID 1");
-    return 1;
+    console.log("⚠️ Provider list failed — using ID 2");
+    return 2;
   }
-  return 1;
 }
 
 // ===============================
@@ -499,7 +501,34 @@ export async function handleCarestackWebhook(body, headers) {
 }
 
 // ===============================
-// POLLING / SCANNING ENGINE
+// FIND CARESTACK APPOINTMENT BY GHL ID
+// ===============================
+export async function findCarestackAppointmentByGhlId(ghlId) {
+  console.log(`🔍 Searching CareStack for an appointment linked to GHL ID: ${ghlId}...`);
+  try {
+    // Search using the Sync API with a wide window (30 days)
+    const modifiedSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const url = `${BASE_URL}/api/v1.0/sync/appointments?modifiedSince=${modifiedSince}`;
+    const res = await axios.get(url, { headers: getCarestackHeaders() });
+    
+    const appointments = res.data?.Results || res.data?.Content || [];
+    const match = appointments.find(a => {
+      const notes = a.notes || a.Notes || "";
+      return notes.includes(`ghl_id:${ghlId}`);
+    });
+
+    if (match) {
+      const id = match.id || match.Id || match.AppointmentId;
+      console.log(`✅ MATCH FOUND: GHL ${ghlId} → CareStack ${id}`);
+      return id;
+    }
+    console.log(`❌ No CareStack appointment found with ghl_id:${ghlId} in the last 30 days.`);
+    return null;
+  } catch (err) {
+    console.error(`❌ Search by GHL ID failed: ${err.message}`);
+    return null;
+  }
+}
 // Runs every 1 minute to catch non-webhook changes
 // ===============================
 export function startCarestackPolling(intervalMs = 60000) {
@@ -559,6 +588,11 @@ async function syncRecentAppointments() {
         if (notes.includes("source:ghl")) continue;
         
         const ghlId = extractIdFromNotes(notes, "ghl_id");
+
+        // 🟢 PERSISTENCE: Save link to Supabase if found in CareStack
+        if (ghlId && apptId) {
+          saveSyncMapping(ghlId, apptId);
+        }
 
         // 2. Skip cancelled/deleted appointments that were never synced to GHL
         //    There's nothing to cancel if it was never created in GHL

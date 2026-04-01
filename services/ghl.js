@@ -13,16 +13,8 @@ import {
   getOrCreateCarestackPatient,
 } from "./carestack.js";
 import { formatWithTZ } from "../utils/helpers.js";
+import { saveSyncMapping, getCarestackIdFromGhl } from "./supabase.js";
 
-// In-memory map: GHL appointment ID → CareStack appointment ID
-// We use 'var' or define it before the first function to ensure scope.
-const ghlToCarestackMap = new Map();
-
-// ===============================
-// 🔐 GHL CONFIG & STATE
-// ===============================
-const GHL_API_KEY = process.env.GHL_ACCESS_TOKEN;
-const GHL_BASE_URL = "https://services.leadconnectorhq.com";
 const GHL_API_VERSION = "2021-07-28";
 
 // Shared headers for all GHL API calls
@@ -239,22 +231,32 @@ export async function handleGHLWebhook(body) {
     let carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
     console.log(`[TRACE] 10. carestack_id from notes: ${carestackId || "NONE"}`);
 
+    // Persistance Fallback 1: SUPABASE DB
     if (!carestackId) {
-      console.log(`[TRACE] 11. ID not in notes. Checking in-memory map...`);
-      carestackId = ghlToCarestackMap.get(appointment.appointmentId);
+      console.log(`[TRACE] 11. ID not in notes. Checking Supabase DB...`);
+      carestackId = await getCarestackIdFromGhl(appointment.appointmentId);
       if (carestackId) {
-        console.log(`[TRACE] ✅ 12. FOUND ID in Local Map: ${carestackId}`);
-      } else {
-        console.log(`[TRACE] ❌ 12. ID NOT in Local Map`);
+        console.log(`[TRACE] ✅ 12. FOUND ID in Supabase: ${carestackId}`);
+      }
+    }
+
+    // Persistance Fallback 2: SEARCH CARESTACK (Last Resort)
+    if (!carestackId) {
+      console.log(`[TRACE] 13. ID NOT in DB. Final attempt: Searching CareStack for link...`);
+      const { findCarestackAppointmentByGhlId } = await import("./carestack.js");
+      carestackId = await findCarestackAppointmentByGhlId(appointment.appointmentId);
+      if (carestackId) {
+        console.log(`[TRACE] ✅ 14. RECOVERED ID FROM CARESTACK: ${carestackId}`);
+        await saveSyncMapping(appointment.appointmentId, carestackId);
       }
     }
 
     if (carestackId) {
       if (isCancelled) {
-        console.log(`[TRACE] 13a. ROUTE: Cancellation for CS Appt ${carestackId}`);
+        console.log(`[TRACE] 15a. ROUTE: Cancellation for CS Appt ${carestackId}`);
         await cancelCarestackAppointment(carestackId).catch(err => console.warn(`[TRACE] ❌ Cancel Fail: ${err.message}`));
       } else {
-        console.log(`[TRACE] 13b. ROUTE: Update for CS Appt ${carestackId}`);
+        console.log(`[TRACE] 15b. ROUTE: Update for CS Appt ${carestackId}`);
         await updateCarestackAppointment(carestackId, {
           startTime: appointment.startTime,
           endTime: appointment.endTime,
@@ -262,9 +264,9 @@ export async function handleGHLWebhook(body) {
         }).catch(err => console.warn(`[TRACE] ❌ Update Fail: ${err.message}`));
       }
     } else if (!isCancelled) {
-      console.log(`[TRACE] 13c. ROUTE: New Creation Path`);
+      console.log(`[TRACE] 15c. ROUTE: New Creation Path`);
       
-      console.log(`[TRACE] 14. Resolving/Creating Patient in CareStack for ${body.email}...`);
+      console.log(`[TRACE] 16. Resolving/Creating Patient in CareStack for ${body.email}...`);
       const patientId = await getOrCreateCarestackPatient({
         firstName: body.first_name,
         lastName: body.last_name,
@@ -273,11 +275,11 @@ export async function handleGHLWebhook(body) {
       });
       
       if (!patientId) {
-        console.error("[TRACE] ❌ 15. ABORT: Could not map Carestack patient");
+        console.error("[TRACE] ❌ 17. ABORT: Could not map Carestack patient");
         return;
       }
 
-      console.log(`[TRACE] 16. Patient Resolved: ${patientId}. Creating Appointment...`);
+      console.log(`[TRACE] 18. Patient Resolved: ${patientId}. Creating Appointment...`);
       await createCarestackAppointment({
         startTime: appointment.startTime,
         endTime: appointment.endTime,
@@ -286,15 +288,15 @@ export async function handleGHLWebhook(body) {
         patientId: patientId
       }).then(async (carestackRes) => {
         const csId = carestackRes?.Content?.Id || carestackRes?.id || carestackRes?.Id;
-        console.log(`[TRACE] 17. CareStack ID returned: ${csId || "NONE"}`);
+        console.log(`[TRACE] 19. CareStack ID returned: ${csId || "NONE"}`);
         
         if (csId) {
-          console.log(`[TRACE] 18. Storing GHL->CS link in map: ${appointment.appointmentId} → ${csId}`);
-          ghlToCarestackMap.set(appointment.appointmentId, String(csId));
+          console.log(`[TRACE] 20. Storing link in Supabase: ${appointment.appointmentId} → ${csId}`);
+          await saveSyncMapping(appointment.appointmentId, csId);
           await updateGHLAppointmentNotes(appointment.appointmentId, csId);
         }
       }).catch(err => {
-        console.error(`[TRACE] ❌ 17. createCarestackAppointment failed:`, err.response?.data || err.message);
+        console.error(`[TRACE] ❌ 19. createCarestackAppointment failed:`, err.response?.data || err.message);
       });
     }
   } catch (err) {
