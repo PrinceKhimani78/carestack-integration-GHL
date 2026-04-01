@@ -12,6 +12,7 @@ import {
   cancelCarestackAppointment,
   getOrCreateCarestackPatient,
 } from "./carestack.js";
+import { formatWithTZ } from "../utils/helpers.js";
 
 // ===============================
 // 🔐 GHL CONFIG
@@ -142,7 +143,8 @@ export async function getGHLAppointment(eventId) {
 export async function findGHLAppointmentByTime(calendarId, contactId, startTime) {
   const headers = getGHLHeaders();
   // Fetch events in a window around the start time (30 min window)
-  const startObj = new Date(startTime);
+  const finalTime = formatWithTZ(startTime);
+  const startObj = new Date(finalTime);
   const startDate = new Date(startObj.getTime() - 30 * 60000).toISOString();
   const endDate = new Date(startObj.getTime() + 30 * 60000).toISOString();
   const locationId = process.env.GHL_LOCATION_ID;
