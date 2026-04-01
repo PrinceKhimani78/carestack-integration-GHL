@@ -232,6 +232,7 @@ export async function handleGHLWebhook(body) {
       }
     }
 
+    const ghlIdMatch = notes.match(/ghl_id:([a-zA-Z0-9]+)/);
     const carestackIdMatch = notes.match(/carestack_id:(\d+)/);
     let carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
     console.log(`[TRACE] 10. carestack_id from notes: ${carestackId || "NONE"}`);

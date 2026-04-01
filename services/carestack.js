@@ -12,6 +12,7 @@ import {
   findGHLAppointmentByTime 
 } from "./ghl.js";
 import { extractIdFromNotes, formatWithTZ } from "../utils/helpers.js";
+import { saveSyncMapping, getGhlIdFromCarestack } from "./supabase.js";
 
 // Helper to format phone to CareStack regex: (123) 456-7890
 function formatPhone(phone) {
@@ -587,7 +588,15 @@ async function syncRecentAppointments() {
         // 1. Loop Prevention + Synced Status Check
         if (notes.includes("source:ghl")) continue;
         
-        const ghlId = extractIdFromNotes(notes, "ghl_id");
+        let ghlId = extractIdFromNotes(notes, "ghl_id");
+
+        // 🟠 DB FALLBACK: If notes are blank, check Supabase
+        if (!ghlId && apptId) {
+          ghlId = await getGhlIdFromCarestack(apptId);
+          if (ghlId) {
+             console.log(`🔗 Scanner: Found GHL ID ${ghlId} in Supabase for CS Appt ${apptId}`);
+          }
+        }
 
         // 🟢 PERSISTENCE: Save link to Supabase if found in CareStack
         if (ghlId && apptId) {
