@@ -411,46 +411,52 @@ export function startCarestackPolling(intervalMs = 60000) {
 
 async function syncRecentAppointments() {
   const headers = getCarestackHeaders();
-  console.log(`🔄 Scanning CareStack for changes...`);
+  console.log(`🔄 Scanning CareStack for changes (Sync API)...`);
 
   try {
-    const now = new Date();
-    const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('.')[0]; 
-    const endTime = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('.')[0]; 
+    // 1. Get a window of the last 10 minutes (to be safe)
+    const scanWindowMinutes = 10;
+    const modifiedSince = new Date(Date.now() - scanWindowMinutes * 60000).toISOString();
 
-    const url = `${BASE_URL}/api/v1.0/appointments?locationId=1&startTime=${startTime}&endTime=${endTime}`;
+    // 2. Fetch using the official Sync API!
+    const url = `${BASE_URL}/api/v1.0/sync/appointments?modifiedSince=${modifiedSince}`;
     const res = await axios.get(url, { headers });
 
-    const appointments = Array.isArray(res.data) ? res.data : (res.data?.Content || res.data?.items || []);
+    // The Sync API returns results in res.data.Results
+    const appointments = res.data?.Results || [];
     
     if (appointments.length > 0) {
-      console.log(`🔍 Scan found ${appointments.length} appointments. Checking for unsynced ones...`);
+      console.log(`🔍 Sync API found ${appointments.length} recent changes. Processing...`);
       
       for (const appt of appointments) {
-        // Standardize keys (API might return lowercase or uppercase)
-        const notes = appt.Notes || appt.notes || "";
-        const apptId = appt.Id || appt.id || appt.AppointmentId;
-        const patientName = appt.PatientName || appt.patientName || "Patient";
+        // Standardize keys (Sync API results are typically capitalized)
+        const notes = appt.Notes || "";
+        const apptId = appt.Id || appt.AppointmentId;
+        const patientName = appt.PatientName || "Patient";
+        const status = appt.Status || appt.StatusName || "Active";
 
-        // 1. Loop Prevention + Search Prevention
+        // 1. Loop Prevention + Synced Status Check
         if (notes.includes("source:ghl")) continue;
         
         const ghlId = extractIdFromNotes(notes, "ghl_id");
-        if (ghlId) continue; // Already synced
-
-        // 2. Found an Unsynced Appointment! 🆕
-        console.log(`✨ Found unsynced appointment ${apptId} for ${patientName}. Syncing to GHL now...`);
+        if (ghlId) {
+          // If already synced, but we're in the sync loop, it means it was modified (Updated/Cancelled)
+          console.log(`🔄 Modification detected for already-synced Appt ${apptId} (Status: ${status})...`);
+        } else {
+          console.log(`✨ Found unsynced appointment ${apptId} for ${patientName}. Syncing to GHL now...`);
+        }
         
-        // We'll mimic the webhook body to reuse our logic
+        // 2. Reuse webhook logic (Handles both create & update/cancel)
+        const mockEvent = (status.includes("Cancelled") || status.includes("Deleted")) ? "Cancelled" : "Scheduled";
         const mockWebhookBody = {
-          event: "Scheduled",
+          event: mockEvent,
           data: {
             NewAppointment: {
               AppointmentId: apptId,
               Notes: notes,
               PatientName: patientName,
-              StartTime: appt.StartTime || appt.startTime || appt.DateTime || appt.dateTime,
-              EndTime: appt.EndTime || appt.endTime
+              StartTime: appt.StartTime || appt.DateTime,
+              EndTime: appt.EndTime
             }
           }
         };
@@ -458,11 +464,11 @@ async function syncRecentAppointments() {
         try {
           await handleCarestackWebhook(mockWebhookBody, {});
         } catch (innerErr) {
-          console.warn(`⚠️ Failed to auto-sync appointment ${apptId}: ${innerErr.message}`);
+          console.warn(`⚠️ Failed to sync appt ${apptId}: ${innerErr.message}`);
         }
       }
     }
   } catch (err) {
-    console.error("❌ Polling cycle error:", err.message);
+    console.error("❌ Sync API Scan error:", err.message);
   }
 }
