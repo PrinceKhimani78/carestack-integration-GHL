@@ -35,6 +35,7 @@ let cachedProviderId = null;
 
 // In-memory cache to prevent infinite retries of failed syncs
 const failedAppointments = new Set();
+const recentlyProcessedIds = new Set(); // Global scope to persist memory
 
 // ===============================
 // 🔐 CARESTACK AUTH HEADERS
