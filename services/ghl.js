@@ -14,8 +14,12 @@ import {
 } from "./carestack.js";
 import { formatWithTZ } from "../utils/helpers.js";
 
+// In-memory map: GHL appointment ID → CareStack appointment ID
+// We use 'var' or define it before the first function to ensure scope.
+const ghlToCarestackMap = new Map();
+
 // ===============================
-// 🔐 GHL CONFIG
+// 🔐 GHL CONFIG & STATE
 // ===============================
 const GHL_API_KEY = process.env.GHL_ACCESS_TOKEN;
 const GHL_BASE_URL = "https://services.leadconnectorhq.com";
@@ -67,7 +71,10 @@ export async function getOrCreateGHLContact(patient) {
 
     return createRes.data?.contact?.id || createRes.data?.id;
   } catch (err) {
-    console.error(`❌ GHL Contact Error: ${err.message} - ${JSON.stringify(err.response?.data || 'No detailed error')}`);
+    console.error(`❌ GHL Contact Error:`, err.stack || err.message);
+    if (err.response?.data) {
+      console.error(`📡 GHL API Error Response:`, JSON.stringify(err.response.data));
+    }
     throw err;
   }
 }
@@ -188,106 +195,94 @@ export async function findGHLAppointmentByTime(calendarId, contactId, startTime)
 // Processes Workflow webhooks
 // ===============================
 export async function handleGHLWebhook(body) {
-  // 🐾 GLOBAL WATCHDOG: Log ALL incoming GHL hits
-  console.log(`📡 GHL Webhook Hit! Body:`, JSON.stringify(body, null, 2));
+  try {
+    // 🐾 GLOBAL WATCHDOG
+    console.log(`📡 GHL Webhook Hit! Body:`, JSON.stringify(body, null, 2));
 
-  // 1. Detect the data structure
-  const appointment = body.calendar;
-  if (!appointment || !appointment.appointmentId) {
-    console.log("⏭️  Skipping GHL event: No appointment data found");
-    return;
-  }
-
-  // GHL has a typo in their webhook payload: "appoinmentStatus" (missing 't')
-  const appointmentStatus = 
-    appointment.appoinmentStatus ||   // GHL typo — primary field
-    appointment.appointmentStatus ||  // Correct spelling (fallback)
-    body.appointment_status ||        // Root-level fallback
-    "";
-  console.log(`📥 GHL Workflow Event | Appointment: ${appointment.appointmentId} | Status: ${appointmentStatus}`);
-
-  const isCancelled = ["cancelled", "invalid", "no_show"].includes(appointmentStatus?.toLowerCase());
-
-
-  // 2. Loop prevention — check webhook notes first
-  if (appointment.notes?.includes("source:carestack")) return;
-
-  // For cancellations: GHL sends stale webhook data (original booking state).
-  // Fetch the CURRENT appointment from GHL API to get updated notes with carestack_id.
-  let notes = appointment.notes || "";
-  if (isCancelled) {
-    try {
-      console.log(`🔍 Fetching current GHL appointment ${appointment.appointmentId} to check carestack_id...`);
-      const liveAppt = await getGHLAppointment(appointment.appointmentId);
-      notes = liveAppt?.notes || liveAppt?.appointment?.notes || notes;
-      console.log(`📋 Live GHL notes: "${notes}"`);
-    } catch (err) {
-      console.warn(`⚠️ Could not fetch live GHL appointment: ${err.message}. Using webhook notes.`);
-    }
-  }
-
-  const carestackIdMatch = notes.match(/carestack_id:(\d+)/);
-  let carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
-
-  // FALLBACK: If not in notes, check our in-memory map (for appointments created in this session)
-  if (!carestackId) {
-    carestackId = ghlToCarestackMap.get(appointment.appointmentId);
-    if (carestackId) {
-      console.log(`🔍 Found CareStack ID ${carestackId} in memory map for GHL Appt ${appointment.appointmentId}`);
-    }
-  }
-
-  if (carestackId) {
-    if (isCancelled) {
-      // ❌ CANCEL in CareStack
-      console.log(`❌ GHL Cancelled — Cancelling CareStack appointment: ${carestackId}`);
-      try {
-        await cancelCarestackAppointment(carestackId);
-        console.log(`✅ CareStack appointment ${carestackId} successfully cancelled.`);
-      } catch (err) {
-        console.warn(`⚠️ Could not cancel CareStack appointment: ${err.message}`);
-      }
+    const appointment = body.calendar;
+    if (!appointment || !appointment.appointmentId) {
+      console.log("⏭️  Skipping GHL event: No appointment data found");
       return;
     }
 
-    // Already linked → UPDATE in CareStack
-    console.log(`🔄 Updating existing CareStack appointment: ${carestackId}`);
-    await updateCarestackAppointment(carestackId, {
-      startTime: appointment.startTime,
-      endTime: appointment.endTime,
-      title: appointment.title
-    });
-  } else if (!isCancelled) {
-    // New → Search for patient using root-level contact info, then Create
-    console.log(`🔍 Mapping GHL contact to CareStack patient...`);
-    const patientId = await getOrCreateCarestackPatient({
-      firstName: body.first_name,
-      lastName: body.last_name,
-      email: body.email,
-      phone: body.phone || body.contact_phone
-    });
+    const appointmentStatus = 
+      appointment.appoinmentStatus || 
+      appointment.appointmentStatus || 
+      body.appointment_status || 
+      "";
     
-    if (!patientId) {
-       console.error("❌ Could not map or create Carestack patient — skipping sync");
-       return;
+    console.log(`📥 GHL Event | ID: ${appointment.appointmentId} | Status: ${appointmentStatus}`);
+
+    const isCancelled = ["cancelled", "invalid", "no_show"].includes(appointmentStatus?.toLowerCase());
+
+    if (appointment.notes?.includes("source:carestack")) return;
+
+    let notes = appointment.notes || "";
+    if (isCancelled) {
+      try {
+        console.log(`🔍 Fetching live GHL appointment to check notes for ID: ${appointment.appointmentId}`);
+        const liveAppt = await getGHLAppointment(appointment.appointmentId);
+        notes = liveAppt?.notes || liveAppt?.appointment?.notes || notes;
+        console.log(`📋 Live GHL notes: "${notes}"`);
+      } catch (err) {
+        console.warn(`⚠️ Could not fetch live notes: ${err.message}`);
+      }
     }
 
-    await createCarestackAppointment({
-      startTime: appointment.startTime,
-      endTime: appointment.endTime,
-      title: appointment.title || `${body.first_name} ${body.last_name}`,
-      ghlAppointmentId: appointment.appointmentId,
-      patientId: patientId
-    }).then(async (carestackRes) => {
-      // CareStack wraps response in { Content: { Id: 123, ... } }
-      const csId = carestackRes?.Content?.Id || carestackRes?.id || carestackRes?.Id;
-      if (csId) {
-        await updateGHLAppointmentNotes(appointment.appointmentId, csId);
+    const carestackIdMatch = notes.match(/carestack_id:(\d+)/);
+    let carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
+
+    // Fallback to Map
+    if (!carestackId) {
+      carestackId = ghlToCarestackMap.get(appointment.appointmentId);
+      if (carestackId) console.log(`🔍 Found ID ${carestackId} in Local Map for GHL Appt ${appointment.appointmentId}`);
+    }
+
+    if (carestackId) {
+      if (isCancelled) {
+        console.log(`❌ GHL Cancelled — Cancelling CareStack appointment: ${carestackId}`);
+        await cancelCarestackAppointment(carestackId).catch(err => console.warn(`⚠️ CareStack Cancel Fail: ${err.message}`));
       } else {
-        console.warn(`⚠️ Could not extract CareStack appt ID from response:`, JSON.stringify(carestackRes));
+        console.log(`🔄 Updating existing CareStack appointment: ${carestackId}`);
+        await updateCarestackAppointment(carestackId, {
+          startTime: appointment.startTime,
+          endTime: appointment.endTime,
+          title: appointment.title
+        }).catch(err => console.warn(`⚠️ CareStack Update Fail: ${err.message}`));
       }
-    }).catch(err => {
-      console.error(`❌ Failed to create CareStack appointment: ${err.message}`);
-    });
+    } else if (!isCancelled) {
+      console.log(`🔍 Mapping GHL contact to CareStack patient...`);
+      const patientId = await getOrCreateCarestackPatient({
+        firstName: body.first_name,
+        lastName: body.last_name,
+        email: body.email,
+        phone: body.phone || body.contact_phone
+      });
+      
+      if (!patientId) {
+        console.error("❌ Could not map Carestack patient — skipping creation");
+        return;
+      }
+
+      console.log(`🆕 Creating NEW CareStack appointment for patient ${patientId}...`);
+      await createCarestackAppointment({
+        startTime: appointment.startTime,
+        endTime: appointment.endTime,
+        title: appointment.title || `${body.first_name} ${body.last_name}`,
+        ghlAppointmentId: appointment.appointmentId,
+        patientId: patientId
+      }).then(async (carestackRes) => {
+        const csId = carestackRes?.Content?.Id || carestackRes?.id || carestackRes?.Id;
+        if (csId) {
+          console.log(`🗺️ Storing link in map: ${appointment.appointmentId} → ${csId}`);
+          ghlToCarestackMap.set(appointment.appointmentId, String(csId));
+          await updateGHLAppointmentNotes(appointment.appointmentId, csId);
+        }
+      }).catch(err => {
+        console.error(`❌ CareStack create fail:`, err.response?.data || err.message);
+      });
+    }
+  } catch (err) {
+    console.error(`❌ GHL Webhook Global Error:`, err.stack || err.message);
   }
 }
