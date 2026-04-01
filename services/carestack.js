@@ -94,17 +94,21 @@ export async function getOrCreateCarestackPatient(contact) {
 
     // 2. Create NEW patient if not found
     console.log(`👤 Patient not found — creating new one for ${contact.firstName} ${contact.lastName}`);
-    const createRes = await axios.post(`${BASE_URL}/api/v1.0/patients`, {
+    
+    const newPatientData = {
       FirstName: contact.firstName,
       LastName: contact.lastName || "Patient",
       Email: contact.email || "",
-      Mobile: contact.phone || "",
-      // REQUIRED FIELDS PER DOC:
-      DOB: "1990-01-01T00:00:00Z", // Default placeholder
-      Gender: "NotSet",            // Enum: Male, Female, Other, NotSet
-      MaritalStatus: "NotApplicable",// Enum: Single, Married, etc.
+      // Removed Mobile to avoid 500 error from strict regex formatting
+      DOB: "1990-01-01T00:00:00Z", 
+      Gender: "Male",              
+      MaritalStatus: "Single",     
       Status: "Active"
-    }, { headers });
+    };
+
+    console.log(`📡 Sending Create Patient Request:`, JSON.stringify(newPatientData, null, 2));
+    
+    const createRes = await axios.post(`${BASE_URL}/api/v1.0/patients`, newPatientData, { headers });
 
     return createRes.data?.Id || createRes.data?.patientId;
   } catch (err) {
