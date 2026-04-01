@@ -293,25 +293,23 @@ export async function updateCarestackAppointment(appointmentId, data) {
 // ⚠️ Using DELETE instead of /cancel because:
 //   - PUT /cancel keeps the slot BLOCKED (causes booking conflicts)
 //   - DELETE fully removes the appointment and FREES the slot
-// ===============================
+/**
+ * Deletes a CareStack appointment (Used when GHL cancels)
+ * ⚠️ Using DELETE instead of /cancel because:
+ *   - PUT /cancel keeps the slot BLOCKED in some versions.
+ *   - DELETE fully removes the appointment and FREES the slot.
+ */
 export async function cancelCarestackAppointment(appointmentId) {
-  console.log(`🔄 Attempting to cancel CareStack appointment ${appointmentId}...`);
+  console.log(`🗑️ Attempting to DELETE CareStack appointment ${appointmentId}...`);
   try {
-    await axios.put(
-      `${BASE_URL}/api/v1.0/appointments/${appointmentId}/cancel`,
-      {
-        Reason: "PatientNotified",
-        Notes: "Cancelled via GHL sync",
-        InactivatedBy: "Practice",
-        CodeRetained: false,
-        ResheduleEnabled: false,
-      },
+    const res = await axios.delete(
+      `${BASE_URL}/api/v1.0/appointments/${appointmentId}`,
       { headers: getCarestackHeaders() }
     );
-    console.log(`✅ CareStack appointment ${appointmentId} CANCELLED.`);
+    console.log(`✅ CareStack DELETE Success:`, JSON.stringify(res.data));
+    return res.data;
   } catch (err) {
-    console.error(`❌ Failed to cancel CareStack appointment ${appointmentId}: ${err.message}`);
-    if (err.response?.data) console.error(`   Details:`, JSON.stringify(err.response.data));
+    console.error(`❌ Failed to delete CareStack appointment ${appointmentId}:`, err.response?.data || err.message);
     throw err;
   }
 }
