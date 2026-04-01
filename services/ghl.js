@@ -9,7 +9,8 @@ import axios from "axios";
 import {
   createCarestackAppointment,
   updateCarestackAppointment,
-  getOrCreateCarestackPatient, // Added new helper
+  cancelCarestackAppointment,
+  getOrCreateCarestackPatient,
 } from "./carestack.js";
 
 // ===============================
@@ -125,30 +126,38 @@ export async function getGHLAppointment(eventId) {
 
 // ===============================
 // HANDLE GHL WEBHOOK
-// Events: Create, Update, Cancel
-// ===============================
-// ===============================
-// HANDLE GHL WEBHOOK
 // Processes Workflow webhooks
 // ===============================
 export async function handleGHLWebhook(body) {
   // 1. Detect the data structure
-  // GHL Workflows put appointment data in body.calendar
   const appointment = body.calendar;
   if (!appointment || !appointment.appointmentId) {
     console.log("⏭️  Skipping GHL event: No appointment data found");
     return;
   }
 
-  console.log(`📥 GHL Workflow Event | Appointment: ${appointment.appointmentId}`);
+  console.log(`📥 GHL Workflow Event | Appointment: ${appointment.appointmentId} | Status: ${body.appointment_status}`);
 
   // 2. Loop prevention
-  // GHL workflows often don't pass notes, but we check if we can
   if (appointment.notes?.includes("source:carestack")) return;
 
-  const carestackId = appointment.notes?.match(/carestack_id:(\w+[-\w]*)/)?.[1];
+  const notes = appointment.notes || "";
+  const carestackIdMatch = notes.match(/carestack_id:(\d+)/);
+  const carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
 
   if (carestackId) {
+    if (body.appointment_status === "cancelled" || body.appointment_status === "invalid") {
+      // ❌ CANCEL in CareStack
+      console.log(`❌ GHL Cancelled — Cancelling CareStack appointment: ${carestackId}`);
+      try {
+        await cancelCarestackAppointment(carestackId);
+        console.log(`✅ CareStack appointment ${carestackId} successfully cancelled.`);
+      } catch (err) {
+        console.warn(`⚠️ Could not cancel CareStack appointment: ${err.message}`);
+      }
+      return;
+    }
+
     // Already linked → UPDATE in CareStack
     console.log(`🔄 Updating existing CareStack appointment: ${carestackId}`);
     await updateCarestackAppointment(carestackId, {
@@ -156,7 +165,7 @@ export async function handleGHLWebhook(body) {
       endTime: appointment.endTime,
       title: appointment.title
     });
-  } else {
+  } else if (body.appointment_status !== "cancelled" && body.appointment_status !== "invalid") {
     // New → Search for patient using root-level contact info, then Create
     console.log(`🔍 Mapping GHL contact to CareStack patient...`);
     const patientId = await getOrCreateCarestackPatient({

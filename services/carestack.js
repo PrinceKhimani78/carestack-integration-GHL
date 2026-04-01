@@ -275,6 +275,22 @@ export async function updateCarestackAppointment(appointmentId, data) {
 }
 
 // ===============================
+// CANCEL APPOINTMENT IN CARESTACK
+// PUT {BASE_URL}/api/v1.0/appointments/{id}/cancel
+// ===============================
+export async function cancelCarestackAppointment(appointmentId) {
+  await axios.put(`${BASE_URL}/api/v1.0/appointments/${appointmentId}/cancel`, {
+    Reason: "PatientNotified",
+    Notes: "Cancelled via GHL sync",
+    CodeRetained: false,
+    ResheduleEnabled: false,
+    InactivatedBy: "Patient"
+  }, { headers: getCarestackHeaders() });
+
+  console.log(`✅ Cancelled CareStack appointment: ${appointmentId}`);
+}
+
+// ===============================
 // HANDLE CARESTACK WEBHOOK
 // Events: Scheduled, Updated, Rescheduled, Cancelled
 // ===============================
@@ -282,7 +298,7 @@ export async function handleCarestackWebhook(body, headers) {
   const event = body.event;
 
   // 1. Filter for events we care about
-  const handledEvents = ["Scheduled", "Updated", "Rescheduled", "Cancelled"];
+  const handledEvents = ["Scheduled", "Updated", "Rescheduled", "Cancelled", "Deleted"];
   if (!handledEvents.includes(event)) {
     console.log(`⏭️  Skipping CareStack event: ${event}`);
     return;
@@ -299,8 +315,23 @@ export async function handleCarestackWebhook(body, headers) {
 
   console.log(`📥 CareStack Event: ${event} | Appointment: ${appointmentId}`);
 
-  // 1. Fetch full appointment details from CareStack API
-  const appointment = await getAppointmentDetails(appointmentId);
+  // 1. Fetch full appointment details (or use old data if deleted)
+  let appointment;
+  try {
+    appointment = await getAppointmentDetails(appointmentId);
+  } catch (err) {
+    if (event === "Deleted" || event === "Cancelled") {
+      console.log(`ℹ️ Appointment removed from CareStack — Using archived data for cancellation.`);
+      appointment = {
+        notes: body.data?.OldAppointment?.Notes,
+        patientName: body.data?.OldAppointment?.PatientName || "Patient",
+        startTime: body.data?.OldAppointment?.StartTime,
+        endTime: body.data?.OldAppointment?.EndTime
+      };
+    } else {
+      throw err;
+    }
+  }
 
   // 2. Check if already synced (NO DB → check metadata in notes)
   //    We store "ghl_id:<id>" in CareStack appointment notes
@@ -329,14 +360,14 @@ export async function handleCarestackWebhook(body, headers) {
     startTime: appointment.startTime,
     endTime: appointment.endTime,
     title: appointment.patientName,
-    appointmentStatus: event === "Cancelled" ? "cancelled" : "confirmed",
+    appointmentStatus: (event === "Cancelled" || event === "Deleted") ? "cancelled" : "confirmed",
   };
 
   if (ghlId) {
     // Already synced → UPDATE existing GHL appointment
     console.log(`🔄 Updating existing GHL appointment: ${ghlId}`);
     await updateGHLAppointment(ghlId, payload);
-  } else if (event !== "Cancelled") {
+  } else if (event !== "Cancelled" && event !== "Deleted") {
     // Not synced yet + Not a cancellation → CREATE new GHL appointment
     console.log(`🆕 Creating new GHL appointment`);
     const ghlRes = await createGHLAppointment(payload);
