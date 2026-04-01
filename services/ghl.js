@@ -227,7 +227,15 @@ export async function handleGHLWebhook(body) {
   }
 
   const carestackIdMatch = notes.match(/carestack_id:(\d+)/);
-  const carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
+  let carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
+
+  // FALLBACK: If not in notes, check our in-memory map (for appointments created in this session)
+  if (!carestackId) {
+    carestackId = ghlToCarestackMap.get(appointment.appointmentId);
+    if (carestackId) {
+      console.log(`🔍 Found CareStack ID ${carestackId} in memory map for GHL Appt ${appointment.appointmentId}`);
+    }
+  }
 
   if (carestackId) {
     if (isCancelled) {

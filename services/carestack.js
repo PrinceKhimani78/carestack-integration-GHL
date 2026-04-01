@@ -245,16 +245,22 @@ export async function createCarestackAppointment(data) {
 
   console.log(`📡 Creating CareStack Appointment:`, JSON.stringify(appointmentPayload, null, 2));
 
-  const res = await axios.post(
-    `${BASE_URL}/api/v1.0/appointments`,
-    appointmentPayload,
-    {
-      headers: getCarestackHeaders(),
-    }
-  );
+  try {
+    const res = await axios.post(
+      `${BASE_URL}/api/v1.0/appointments`,
+      appointmentPayload,
+      { headers: getCarestackHeaders() }
+    );
 
-  console.log(`✅ Created CareStack appointment! Response:`, JSON.stringify(res.data));
-  return res.data;
+    console.log(`✅ Created CareStack appointment! Response:`, JSON.stringify(res.data));
+    return res.data;
+  } catch (err) {
+    console.error(`❌ CareStack Appointment Creation Failed! 
+    Status: ${err.response?.status} 
+    Error: ${JSON.stringify(err.response?.data || "No details")}
+    Payload Sent: ${JSON.stringify(appointmentPayload)}`);
+    throw err;
+  }
 }
 
 // ===============================
@@ -286,12 +292,25 @@ export async function updateCarestackAppointment(appointmentId, data) {
 //   - DELETE fully removes the appointment and FREES the slot
 // ===============================
 export async function cancelCarestackAppointment(appointmentId) {
-  await axios.delete(
-    `${BASE_URL}/api/v1.0/appointments/${appointmentId}`,
-    { headers: getCarestackHeaders() }
-  );
-
-  console.log(`✅ Deleted CareStack appointment: ${appointmentId} (slot freed)`);
+  console.log(`🔄 Attempting to cancel CareStack appointment ${appointmentId}...`);
+  try {
+    await axios.put(
+      `${BASE_URL}/api/v1.0/appointments/${appointmentId}/cancel`,
+      {
+        Reason: "PatientNotified",
+        Notes: "Cancelled via GHL sync",
+        InactivatedBy: "Practice",
+        CodeRetained: false,
+        ResheduleEnabled: false,
+      },
+      { headers: getCarestackHeaders() }
+    );
+    console.log(`✅ CareStack appointment ${appointmentId} CANCELLED.`);
+  } catch (err) {
+    console.error(`❌ Failed to cancel CareStack appointment ${appointmentId}: ${err.message}`);
+    if (err.response?.data) console.error(`   Details:`, JSON.stringify(err.response.data));
+    throw err;
+  }
 }
 
 // ===============================
