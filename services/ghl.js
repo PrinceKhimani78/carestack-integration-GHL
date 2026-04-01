@@ -136,6 +136,30 @@ export async function getGHLAppointment(eventId) {
 }
 
 // ===============================
+// FIND APPOINTMENT BY TIME (DEDUPLICATION)
+// GET /calendars/events/appointments
+// ===============================
+export async function findGHLAppointmentByTime(calendarId, contactId, startTime) {
+  const headers = getGHLHeaders();
+  // Fetch appointments in a small window around the start time (1 hour window)
+  const startObj = new Date(startTime);
+  const startDate = startObj.getTime();
+  const endDate = startDate + 60000; // 1 minute window for exact match
+
+  try {
+    const res = await axios.get(
+      `${GHL_BASE_URL}/calendars/events/appointments?calendarId=${calendarId}&startTime=${startDate}&endTime=${endDate}`,
+      { headers }
+    );
+    // Find one that matches the contactId
+    return res.data?.events?.find(e => e.contactId === contactId);
+  } catch (err) {
+    console.warn(`⚠️ GHL Search Failed: ${err.message}`);
+    return null;
+  }
+}
+
+// ===============================
 // HANDLE GHL WEBHOOK
 // Processes Workflow webhooks
 // ===============================

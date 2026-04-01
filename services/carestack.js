@@ -8,7 +8,8 @@ import axios from "axios";
 import { 
   createGHLAppointment, 
   updateGHLAppointment, 
-  getOrCreateGHLContact 
+  getOrCreateGHLContact,
+  findGHLAppointmentByTime 
 } from "./ghl.js";
 import { extractIdFromNotes } from "../utils/helpers.js";
 
@@ -30,6 +31,9 @@ const BASE_URL = process.env.CARESTACK_BASE_URL; // https://dentistforchickens.c
 let cachedLocationId = null;
 let cachedOperatoryId = null;
 let cachedProviderId = null;
+
+// In-memory cache to prevent infinite retries of failed syncs
+const failedAppointments = new Set();
 
 // ===============================
 // 🔐 CARESTACK AUTH HEADERS
@@ -362,7 +366,7 @@ export async function handleCarestackWebhook(body, headers) {
 
   // 2. Check if already synced (NO DB → check metadata in notes)
   //    We store "ghl_id:<id>" in CareStack appointment notes
-  const ghlId = extractIdFromNotes(appointment?.notes || appointment?.Notes, "ghl_id");
+  let ghlId = extractIdFromNotes(appointment?.notes || appointment?.Notes, "ghl_id");
 
   // 3. Check for loop prevention — if this was created from GHL, skip
   const notesString = appointment?.notes || appointment?.Notes || "";
@@ -381,14 +385,32 @@ export async function handleCarestackWebhook(body, headers) {
     return;
   }
 
+  // Option 3: Double-check GHL for existing appointment if ghl_id is missing
+  if (!ghlId) {
+    const rawStartTime = appointment.startTime || appointment.StartTime || appointment.startDateTime || appointment.DateTime || body.data?.NewAppointment?.StartTime || body.data?.OldAppointment?.StartTime;
+    if (rawStartTime) {
+      console.log(`🔍 No ghl_id in notes — Searching GHL for existing appt at ${rawStartTime}...`);
+      const existingAppt = await findGHLAppointmentByTime(process.env.GHL_CALENDAR_ID, contactId, rawStartTime);
+      if (existingAppt?.id) {
+        ghlId = existingAppt.id;
+        console.log(`✅ Found orphan GHL appointment: ${ghlId}. Linking...`);
+        // Silently link it back to CareStack notes for the next cycle
+        await updateCarestackAppointmentNotes(appointmentId, ghlId, appointment?.notes || appointment?.Notes);
+      }
+    }
+  }
+
   const rawStartTime = appointment.startTime || appointment.StartTime || appointment.startDateTime || appointment.DateTime || body.data?.NewAppointment?.StartTime || body.data?.OldAppointment?.StartTime;
   const rawEndTime = appointment.endTime || appointment.EndTime || appointment.endDateTime || body.data?.NewAppointment?.EndTime || body.data?.OldAppointment?.EndTime;
+
+  console.log(`⏱️ RAW Time from CareStack -> Start: ${rawStartTime} | End: ${rawEndTime}`);
 
   if (!rawStartTime) {
     console.warn("⚠️ Cannot sync to GHL: No StartTime found in appointment data.");
     return;
   }
 
+  // Ensure it formats correctly regardless of timezone
   const finalStartTime = new Date(rawStartTime).toISOString();
   const finalEndTime = rawEndTime 
     ? new Date(rawEndTime).toISOString()
@@ -431,9 +453,17 @@ export async function handleCarestackWebhook(body, headers) {
       }
     }
   } catch (err) {
+    const errorData = err.response?.data;
+    const errorMessage = errorData?.message || "";
+
+    if (errorMessage.includes("slot you have selected is no longer available")) {
+      console.warn(`⚠️ Slot conflict in GHL — skipping sync for Appt ${appointmentId}`);
+      return; // Stop here, don't throw (treat as handled)
+    }
+
     console.error("❌ GHL ERROR FULL:", {
       status: err.response?.status,
-      data: err.response?.data,
+      data: errorData,
       payload: payload
     });
     throw err;
@@ -488,6 +518,10 @@ async function syncRecentAppointments() {
         // 🔍 Mapping: Handle both Case-Sensitivities (Sync API is lowercase, Webhooks are Uppercase)
         const notes = appt.notes || appt.Notes || "";
         const apptId = appt.id || appt.Id || appt.AppointmentId;
+
+        // Skip if this appointment has failed recently to prevent infinite log loops
+        if (failedAppointments.has(apptId)) continue;
+
         const patientId = appt.patientId || appt.PatientId;
         const status = appt.status || appt.Status || "Active";
         const startTime = appt.startDateTime || appt.StartTime || appt.DateTime;
@@ -497,12 +531,6 @@ async function syncRecentAppointments() {
         if (notes.includes("source:ghl")) continue;
         
         const ghlId = extractIdFromNotes(notes, "ghl_id");
-        if (ghlId) {
-          console.log(`🔄 Modification detected for Appt ${apptId} (Status: ${status})...`);
-        } else {
-          console.log(`✨ Found unsynced appointment ${apptId} (Status: ${status}). Syncing to GHL...`);
-        }
-        
         // 2. Reuse webhook logic (Handles both create & update/cancel)
         const mockStatus = (status === "Cancelled" || status === "Deleted") ? "Cancelled" : "Scheduled";
         
@@ -522,7 +550,10 @@ async function syncRecentAppointments() {
         try {
           await handleCarestackWebhook(mockWebhookBody, {});
         } catch (innerErr) {
-          console.warn(`⚠️ Failed to sync appt ${apptId}: ${innerErr.message}`);
+          console.warn(`⏳ Mark Appt ${apptId} as failed for this session.`);
+          failedAppointments.add(apptId);
+          // Optional: clear from cache after 1 hour if you want to retry later
+          setTimeout(() => failedAppointments.delete(apptId), 3600000);
         }
       }
     }
