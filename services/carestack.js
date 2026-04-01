@@ -117,7 +117,9 @@ export async function getOrCreateCarestackPatient(contact) {
     
     const createRes = await axios.post(`${BASE_URL}/api/v1.0/patients`, newPatientData, { headers });
 
-    return createRes.data?.Id || createRes.data?.patientId;
+    console.log(`✅ CareStack Create Patient Response:`, JSON.stringify(createRes.data, null, 2));
+
+    return createRes.data?.Id || createRes.data?.id || createRes.data?.patientId;
   } catch (err) {
     console.error(`❌ CareStack Patient API Error: ${err.response?.status} - ${JSON.stringify(err.response?.data || err.message)}`);
     throw err;
