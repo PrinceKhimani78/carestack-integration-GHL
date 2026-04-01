@@ -129,6 +129,9 @@ export async function getGHLAppointment(eventId) {
 // Processes Workflow webhooks
 // ===============================
 export async function handleGHLWebhook(body) {
+  // 🐾 GLOBAL WATCHDOG: Log ALL incoming GHL hits
+  console.log(`📡 GHL Webhook Hit! Body:`, JSON.stringify(body, null, 2));
+
   // 1. Detect the data structure
   const appointment = body.calendar;
   if (!appointment || !appointment.appointmentId) {

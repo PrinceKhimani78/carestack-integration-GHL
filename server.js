@@ -19,6 +19,10 @@ app.use(bodyParser.json());
 // are Scheduled, Updated, or Rescheduled
 // ===============================
 app.post("/webhook/carestack", async (req, res) => {
+  // 🐾 GLOBAL WATCHDOG: Log ALL incoming CareStack hits
+  console.log(`📡 CareStack Webhook Hit! Event: ${req.body?.event || "Unknown"}`);
+  console.log("📦 Raw Request Body:", JSON.stringify(req.body, null, 2));
+
   try {
     await handleCarestackWebhook(req.body, req.headers);
     res.status(200).send("OK");
