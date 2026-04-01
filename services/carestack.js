@@ -253,7 +253,7 @@ export async function createCarestackAppointment(data) {
     }
   );
 
-  console.log(`✅ Created CareStack appointment!`);
+  console.log(`✅ Created CareStack appointment! Response:`, JSON.stringify(res.data));
   return res.data;
 }
 

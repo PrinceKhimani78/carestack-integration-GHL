@@ -122,6 +122,28 @@ export async function updateGHLAppointment(eventId, data) {
 }
 
 // ===============================
+// WRITE CARESTACK ID TO GHL APPOINTMENT NOTES
+// ===============================
+export async function updateGHLAppointmentNotes(ghlAppointmentId, carestackAppointmentId) {
+  try {
+    await axios.put(
+      `${GHL_BASE_URL}/calendars/events/appointments/${ghlAppointmentId}`,
+      {
+        calendarId: process.env.GHL_CALENDAR_ID,
+        appointmentStatus: "confirmed",
+        notes: `carestack_id:${carestackAppointmentId} | source:carestack`,
+        ignoreDateRange: true,
+      },
+      { headers: getGHLHeaders() }
+    );
+    console.log(`🔗 Linked CareStack ID ${carestackAppointmentId} → GHL appointment ${ghlAppointmentId}`);
+  } catch (err) {
+    console.warn(`⚠️ Could not write carestack_id to GHL notes: ${err.message}`);
+  }
+}
+
+
+// ===============================
 // GET APPOINTMENT FROM GHL
 // GET /calendars/events/appointments/:eventId
 // ===============================
@@ -235,6 +257,16 @@ export async function handleGHLWebhook(body) {
       title: appointment.title || `${body.first_name} ${body.last_name}`,
       ghlAppointmentId: appointment.appointmentId,
       patientId: patientId
+    }).then(async (carestackRes) => {
+      // CareStack wraps response in { Content: { Id: 123, ... } }
+      const csId = carestackRes?.Content?.Id || carestackRes?.id || carestackRes?.Id;
+      if (csId) {
+        await updateGHLAppointmentNotes(appointment.appointmentId, csId);
+      } else {
+        console.warn(`⚠️ Could not extract CareStack appt ID from response:`, JSON.stringify(carestackRes));
+      }
+    }).catch(err => {
+      console.error(`❌ Failed to create CareStack appointment: ${err.message}`);
     });
   }
 }
