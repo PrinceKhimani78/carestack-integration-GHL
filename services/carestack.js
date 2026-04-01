@@ -381,33 +381,46 @@ export async function handleCarestackWebhook(body, headers) {
     return;
   }
 
+  const finalStartTime = appointment.startTime || appointment.StartTime || appointment.startDateTime || appointment.DateTime;
+  const finalEndTime = appointment.endTime || appointment.EndTime || appointment.endDateTime;
+
+  if (!finalStartTime) {
+    console.warn("⚠️ Cannot sync to GHL: No StartTime found in appointment data.");
+    return;
+  }
+
   const payload = {
     calendarId: process.env.GHL_CALENDAR_ID,
     locationId: process.env.GHL_LOCATION_ID,
     contactId: contactId,
-    startTime: appointment.startTime,
-    endTime: appointment.endTime,
+    startTime: finalStartTime,
+    endTime: finalEndTime,
     title: appointment.patientName,
     appointmentStatus: (event === "Cancelled" || event === "Deleted") ? "cancelled" : "confirmed",
   };
 
-  if (ghlId) {
-    // Already synced → UPDATE existing GHL appointment
-    console.log(`🔄 Updating existing GHL appointment: ${ghlId}`);
-    await updateGHLAppointment(ghlId, payload);
-  } else if (event !== "Cancelled" && event !== "Deleted") {
-    // Not synced yet + Not a cancellation → CREATE new GHL appointment
-    console.log(`🆕 Creating new GHL appointment`);
-    const ghlRes = await createGHLAppointment(payload);
+  try {
+    if (ghlId) {
+      // Already synced → UPDATE existing GHL appointment
+      console.log(`🔄 Updating existing GHL appointment: ${ghlId}`);
+      await updateGHLAppointment(ghlId, payload);
+    } else if (event !== "Cancelled" && event !== "Deleted") {
+      // Not synced yet + Not a cancellation → CREATE new GHL appointment
+      console.log(`🆕 Creating new GHL appointment for ${appointment.patientName}...`);
+      const ghlRes = await createGHLAppointment(payload);
 
-    // Store the GHL appointment ID back in CareStack notes for future linking
-    if (ghlRes?.id) {
-      await updateCarestackAppointmentNotes(
-        appointmentId,
-        ghlRes.id,
-        appointment?.notes
-      );
+      // Store the GHL appointment ID back in CareStack notes for future linking
+      if (ghlRes?.id) {
+        await updateCarestackAppointmentNotes(
+          appointmentId,
+          ghlRes.id,
+          appointment?.notes || appointment?.Notes
+        );
+      }
     }
+  } catch (err) {
+    console.error(`❌ GHL Push Failed: ${err.message} - ${JSON.stringify(err.response?.data || 'No detailed error')}`);
+    throw err;
   }
 }
 
