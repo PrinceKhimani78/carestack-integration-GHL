@@ -176,7 +176,16 @@ export async function handleGHLWebhook(body) {
     return;
   }
 
-  console.log(`📥 GHL Workflow Event | Appointment: ${appointment.appointmentId} | Status: ${body.appointment_status}`);
+  // GHL has a typo in their webhook payload: "appoinmentStatus" (missing 't')
+  const appointmentStatus = 
+    appointment.appoinmentStatus ||   // GHL typo — primary field
+    appointment.appointmentStatus ||  // Correct spelling (fallback)
+    body.appointment_status ||        // Root-level fallback
+    "";
+  console.log(`📥 GHL Workflow Event | Appointment: ${appointment.appointmentId} | Status: ${appointmentStatus}`);
+
+  const isCancelled = ["cancelled", "invalid", "no_show"].includes(appointmentStatus?.toLowerCase());
+
 
   // 2. Loop prevention
   if (appointment.notes?.includes("source:carestack")) return;
@@ -186,7 +195,7 @@ export async function handleGHLWebhook(body) {
   const carestackId = carestackIdMatch ? carestackIdMatch[1] : null;
 
   if (carestackId) {
-    if (body.appointment_status === "cancelled" || body.appointment_status === "invalid") {
+    if (isCancelled) {
       // ❌ CANCEL in CareStack
       console.log(`❌ GHL Cancelled — Cancelling CareStack appointment: ${carestackId}`);
       try {
@@ -205,7 +214,7 @@ export async function handleGHLWebhook(body) {
       endTime: appointment.endTime,
       title: appointment.title
     });
-  } else if (body.appointment_status !== "cancelled" && body.appointment_status !== "invalid") {
+  } else if (!isCancelled) {
     // New → Search for patient using root-level contact info, then Create
     console.log(`🔍 Mapping GHL contact to CareStack patient...`);
     const patientId = await getOrCreateCarestackPatient({

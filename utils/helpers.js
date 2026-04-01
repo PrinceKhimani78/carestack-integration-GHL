@@ -20,25 +20,42 @@ export function extractIdFromNotes(notes, key) {
 }
 
 /**
- * Ensures a time string is formatted relative to Sydney Time (+11:00)
- * if no timezone is already present.
+ * Ensures a time string is formatted relative to Sydney Time (Australia/Sydney)
+ * Automatically handles AEST (+10) vs AEDT (+11) DST transitions.
  */
 export function formatWithTZ(timeStr) {
   if (!timeStr) return null;
   
-  // Check if the string already has a timezone indicator:
-  // 1. Ends with 'Z'
-  // 2. Contains '+'
-  // 3. Contains a '-' AFTER the date part (e.g. 2026-05-04T10:00:00-05:00)
+  // Check if the string already has a timezone indicator
   const hasTZ = timeStr.endsWith("Z") || timeStr.includes("+") || (timeStr.lastIndexOf("-") > 10);
   
   if (hasTZ) {
     return new Date(timeStr).toISOString();
   }
   
-  // Default to Sydney (+11:00) for clean strings like '2026-05-04T10:45:00'
-  const cleanTime = timeStr.replace(" ", "T"); // Ensure ISO format
-  return new Date(`${cleanTime}+11:00`).toISOString();
+  // No timezone info — interpret as Australia/Sydney local time
+  // Use Intl to get the correct UTC offset for that specific date (handles AEST/AEDT automatically)
+  const cleanTime = timeStr.replace(" ", "T");
+  
+  // Parse the naive datetime, then figure out what UTC offset Sydney has at that moment
+  const naiveDate = new Date(cleanTime + "Z"); // Treat as UTC temporarily
+  
+  // Get Sydney's offset in minutes for the given date
+  const sydneyFormatter = new Intl.DateTimeFormat("en-AU", {
+    timeZone: "Australia/Sydney",
+    timeZoneName: "shortOffset",
+  });
+  const parts = sydneyFormatter.formatToParts(naiveDate);
+  const tzPart = parts.find(p => p.type === "timeZoneName")?.value || "GMT+10";
+  
+  // Parse offset like "GMT+11" or "GMT+10"
+  const offsetMatch = tzPart.match(/GMT([+-]\d+)/);
+  const offsetHours = offsetMatch ? parseInt(offsetMatch[1]) : 10;
+  
+  // Apply the correct offset
+  const offsetMs = offsetHours * 60 * 60 * 1000;
+  const utcDate = new Date(new Date(cleanTime).getTime() - offsetMs);
+  return utcDate.toISOString();
 }
 
 /**
