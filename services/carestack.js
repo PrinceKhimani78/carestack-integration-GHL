@@ -414,23 +414,18 @@ async function syncRecentAppointments() {
   console.log(`🔄 Scanning CareStack for changes (Sync API)...`);
 
   try {
-    // 1. Get a window of the last 10 minutes (to be safe)
-    const scanWindowMinutes = 10;
+    // 1. Get a wider window (60 minutes) to ensure we never miss an update
+    const scanWindowMinutes = 60;
     const modifiedSince = new Date(Date.now() - scanWindowMinutes * 60000).toISOString();
 
     // 2. Fetch using the official Sync API!
     const url = `${BASE_URL}/api/v1.0/sync/appointments?modifiedSince=${modifiedSince}`;
-    console.log(`🔗 Scanning URL: ${url}`);
-    
     const res = await axios.get(url, { headers });
     
-    // 🔍 DEBUG: Log the full response to see exact structure
-    console.log("📦 Sync API Response:", JSON.stringify(res.data, null, 2));
-
     const appointments = res.data?.Results || res.data?.results || res.data?.Content || res.data?.items || [];
     
     if (appointments.length > 0) {
-      console.log(`🔍 Found ${appointments.length} modification(s) in window.`);
+      console.log(`🔍 Found ${appointments.length} modification(s) in the last ${scanWindowMinutes}m. Processing...`);
       
       for (const appt of appointments) {
         // 🔍 Mapping: Handle both Case-Sensitivities (Sync API is lowercase, Webhooks are Uppercase)
